@@ -1,0 +1,207 @@
+{
+	"info": {
+		"_postman_id": "a9b8c7d6-e5f4-4a3b-8c7d-6e5f4a3b2c1d",
+		"name": "Auction Auth Service API",
+		"description": "API collection for the Auction Authentication Service (AAS) Extension backend.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/health",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"health"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Auth - Login",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"username\": \"usalogistics\",\n    \"userInfo\": {\n        \"platform\": \"Windows\",\n        \"userAgent\": \"Postman Runtime\"\n    }\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/auth/login",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"auth",
+						"login"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Auth - Verify OTP",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"code\": \"123456\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/auth/verify",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"auth",
+						"verify"
+					]
+				},
+				"description": "Enter the OTP code received on Telegram here."
+			},
+			"response": []
+		},
+		{
+			"name": "Auth - Register",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"username\": \"newuser\",\n    \"role\": \"logistics\"\n}"
+				},
+				"url": {
+					"raw": "{{baseUrl}}/auth/register",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"auth",
+						"register"
+					]
+				},
+				"description": "Register a new user (Admin internal use)"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Config Restrictions",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/config/restrictions?username=usalogistics",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"config",
+						"restrictions"
+					],
+					"query": [
+						{
+							"key": "username",
+							"value": "usalogistics"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get Credentials (Copart 1)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/credentials/copart?account_name=copart1",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"credentials",
+						"copart"
+					],
+					"query": [
+						{
+							"key": "account_name",
+							"value": "copart1",
+							"description": "Account identifier (copart1, copart2, etc.)"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get Credentials (IAAI)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseUrl}}/credentials/iaai",
+					"host": [
+						"{{baseUrl}}"
+					],
+					"path": [
+						"credentials",
+						"iaai"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:3000",
+			"type": "string"
+		}
+	]
+}

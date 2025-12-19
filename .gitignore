@@ -1,0 +1,56 @@
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.idea
+.DS_Store
+*.suo
+*.ntvs
+*.njsproj
+*.sln
+*.sw?
+.vscode/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Extension build artifacts
+*.crx
+*.pem
+extension/*.zip
+
+# Server specific
+server/.env
+server/node_modules
+
+# Old files (to be deleted)
+/background.js
+/content.js
+/src/
+/sidepanel.html
+/sidepanel.js
+/sidepanel.css
+/early-overlay.js
+/manifest.json
+/ico.png
+/icons/
+
+# Documentation files (keep these)
+!README.md
+!ARCHITECTURE.md
+!REFACTORING.md

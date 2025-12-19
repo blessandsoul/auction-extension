@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  role      String   @default("user")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+model Credential {
+  id          Int      @id @default(autoincrement())
+  site        String
+  accountName String   @map("account_name")
+  username    String
+  password    String
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("credentials")
+}
+
+model UIRestriction {
+  id          Int      @id @default(autoincrement())
+  roleName    String   @map("role_name")
+  selector    String   @db.Text
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("ui_restrictions")
+}

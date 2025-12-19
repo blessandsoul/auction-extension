@@ -1,0 +1,70 @@
+{
+    "manifest_version": 3,
+    "name": "AAS (Auction Authorisation Service)",
+    "description": "Secure auction account authentication",
+    "version": "1.0.0",
+    "permissions": [
+        "sidePanel",
+        "storage",
+        "tabs",
+        "activeTab",
+        "scripting",
+        "cookies",
+        "browsingData",
+        "clipboardRead"
+    ],
+    "host_permissions": [
+        "https://www.copart.com/*",
+        "https://copart.com/*",
+        "https://www.iaai.com/*",
+        "https://iaai.com/*",
+        "https://login.iaai.com/*",
+        "https://api.ipify.org/*",
+        "https://api.telegram.org/*",
+        "http://localhost:3000/*"
+    ],
+    "background": {
+        "service_worker": "background.js",
+        "type": "module"
+    },
+    "side_panel": {
+        "default_path": "sidepanel.html"
+    },
+    "action": {
+        "default_icon": "ico.png",
+        "default_title": "AAS"
+    },
+    "icons": {
+        "16": "ico.png",
+        "32": "ico.png",
+        "48": "ico.png",
+        "128": "ico.png"
+    },
+    "incognito": "spanning",
+    "content_scripts": [
+        {
+            "matches": [
+                "https://www.copart.com/*",
+                "https://copart.com/*",
+                "https://login.iaai.com/*",
+                "https://www.iaai.com/*"
+            ],
+            "js": [
+                "early-overlay.js"
+            ],
+            "run_at": "document_start",
+            "all_frames": true
+        },
+        {
+            "matches": [
+                "https://www.copart.com/*",
+                "https://copart.com/*",
+                "https://login.iaai.com/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ]
+}
