@@ -9,6 +9,180 @@ import ApiService from './src/services/api.service.js';
 // Initialize API Service
 const apiService = new ApiService(CONFIG.SERVER_URL);
 
+// ============================================
+// Navigation Gate - Prevents Infinite Loops
+// ============================================
+
+const NAVIGATION_LIMITS = {
+  SHORT_WINDOW: 15000, // 15 seconds
+  LONG_WINDOW: 60000,  // 60 seconds
+  MAX_SHORT: 1,        // Max 1 navigation per 15s
+  MAX_LONG: 3          // Max 3 navigations per 60s
+};
+
+const TabState = {
+  IDLE: 'IDLE',
+  OPENED_TARGET: 'OPENED_TARGET',
+  ON_LOGIN_PAGE: 'ON_LOGIN_PAGE',
+  SUBMITTED_LOGIN: 'SUBMITTED_LOGIN',
+  WAITING_REDIRECT: 'WAITING_REDIRECT',
+  DONE: 'DONE',
+  BLOCKED: 'BLOCKED'
+};
+
+async function getNavigationHistory(tabId, domain) {
+  const key = `nav_history_${tabId}_${domain}`;
+  const result = await chrome.storage.session.get(key);
+  return result[key] || { attempts: [], blocked: false };
+}
+
+async function getTabState(tabId, domain) {
+  const key = `tab_state_${tabId}_${domain}`;
+  const result = await chrome.storage.session.get(key);
+  return result[key] || {
+    state: TabState.IDLE,
+    runId: null,
+    attemptCount: 0,
+    lastActionAt: 0,
+    createdAt: Date.now()
+  };
+}
+
+async function setTabState(tabId, domain, updates) {
+  const key = `tab_state_${tabId}_${domain}`;
+  const current = await getTabState(tabId, domain);
+  const newState = { ...current, ...updates };
+  await chrome.storage.session.set({ [key]: newState });
+  log('info', `[NAV-GATE] Tab ${tabId} state: ${current.state} -> ${newState.state}`);
+  return newState;
+}
+
+async function canNavigate(tabId, domain, reason, runId) {
+  const now = Date.now();
+  const history = await getNavigationHistory(tabId, domain);
+  
+  if (history.blocked) {
+    log('error', `[NAV-GATE] Tab ${tabId} is BLOCKED - navigation denied`);
+    return { allowed: false, reason: 'Tab is blocked due to previous loop detection' };
+  }
+  
+  const recentShort = history.attempts.filter(a => (now - a.timestamp) < NAVIGATION_LIMITS.SHORT_WINDOW);
+  const recentLong = history.attempts.filter(a => (now - a.timestamp) < NAVIGATION_LIMITS.LONG_WINDOW);
+  
+  if (recentShort.length >= NAVIGATION_LIMITS.MAX_SHORT) {
+    log('error', `[NAV-GATE] Tab ${tabId} exceeded SHORT limit: ${recentShort.length} in 15s`);
+    await blockTab(tabId, domain, runId, 'Exceeded 1 navigation per 15 seconds');
+    return { allowed: false, reason: 'Too many navigations in short window' };
+  }
+  
+  if (recentLong.length >= NAVIGATION_LIMITS.MAX_LONG) {
+    log('error', `[NAV-GATE] Tab ${tabId} exceeded LONG limit: ${recentLong.length} in 60s`);
+    await blockTab(tabId, domain, runId, 'Exceeded 3 navigations per 60 seconds');
+    return { allowed: false, reason: 'Too many navigations in long window' };
+  }
+  
+  log('info', `[NAV-GATE] Tab ${tabId} navigation ALLOWED - ${recentShort.length}/1 (15s), ${recentLong.length}/3 (60s)`);
+  return { allowed: true };
+}
+
+async function recordNavigation(tabId, domain, url, reason, runId) {
+  const key = `nav_history_${tabId}_${domain}`;
+  const history = await getNavigationHistory(tabId, domain);
+  
+  history.attempts.push({
+    timestamp: Date.now(),
+    url,
+    reason,
+    runId
+  });
+  
+  if (history.attempts.length > 10) {
+    history.attempts = history.attempts.slice(-10);
+  }
+  
+  await chrome.storage.session.set({ [key]: history });
+  log('info', `[NAV-GATE] Recorded: ${reason} -> ${url.substring(0, 50)}`);
+}
+
+async function blockTab(tabId, domain, runId, reason) {
+  const key = `nav_history_${tabId}_${domain}`;
+  const history = await getNavigationHistory(tabId, domain);
+  
+  history.blocked = true;
+  history.blockReason = reason;
+  history.blockedAt = Date.now();
+  
+  await chrome.storage.session.set({ [key]: history });
+  await setTabState(tabId, domain, { state: TabState.BLOCKED });
+  
+  chrome.action.setBadgeText({ text: 'LOOP', tabId }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId }).catch(() => {});
+  
+  log('error', `[NAV-GATE] ⛔ Tab ${tabId} BLOCKED: ${reason}`);
+  
+  chrome.scripting.executeScript({
+    target: { tabId },
+    func: (msg) => alert(`AAS Loop Detected\n\n${msg}\n\nAutomatic navigation stopped. Close tab and try again.`),
+    args: [reason]
+  }).catch(() => {});
+}
+
+async function clearNavigationHistory(tabId, domain) {
+  await chrome.storage.session.remove([
+    `nav_history_${tabId}_${domain}`,
+    `tab_state_${tabId}_${domain}`
+  ]);
+  chrome.action.setBadgeText({ text: '', tabId }).catch(() => {});
+  log('info', `[NAV-GATE] Cleared history for tab ${tabId}`);
+}
+
+async function safeNavigate(tabId, domain, url, reason, runId) {
+  log('info', `[NAV-GATE] Navigation request: tab=${tabId}, reason=${reason}`);
+  
+  const check = await canNavigate(tabId, domain, reason, runId);
+  
+  if (!check.allowed) {
+    log('error', `[NAV-GATE] Navigation DENIED: ${check.reason}`);
+    return { success: false, error: check.reason };
+  }
+  
+  await recordNavigation(tabId, domain, url, reason, runId);
+  
+  try {
+    await chrome.tabs.update(tabId, { url });
+    log('info', `[NAV-GATE] Navigation executed successfully`);
+    return { success: true };
+  } catch (error) {
+    log('error', `[NAV-GATE] Navigation failed:`, error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+async function shouldPerformAction(tabId, domain, action) {
+  const state = await getTabState(tabId, domain);
+  
+  if (action === 'SUBMIT_LOGIN') {
+    if ([TabState.SUBMITTED_LOGIN, TabState.WAITING_REDIRECT, TabState.DONE, TabState.BLOCKED].includes(state.state)) {
+      log('warn', `[NAV-GATE] SUBMIT_LOGIN denied - state is ${state.state}`);
+      return false;
+    }
+    
+    if (state.attemptCount >= 2) {
+      log('warn', `[NAV-GATE] SUBMIT_LOGIN denied - already attempted ${state.attemptCount} times`);
+      return false;
+    }
+    
+    return true;
+  }
+  
+  if (action === 'NAVIGATE' && state.state === TabState.BLOCKED) {
+    log('warn', `[NAV-GATE] NAVIGATE denied - tab is blocked`);
+    return false;
+  }
+  
+  return true;
+}
+
 // Cache for pending logins
 const loginCache = new Map();
 
@@ -445,6 +619,14 @@ async function handleOpenCopart(data, sendResponse) {
     const targetTabId = tab.id;
     log('info', `[${runId}] Created tab ${targetTabId}, navigating to login page`);
     
+    // Initialize tab state with runId (persists across reloads)
+    await setTabState(targetTabId, domain, {
+      state: TabState.OPENED_TARGET,
+      runId: runId,
+      attemptCount: 0,
+      lastActionAt: Date.now()
+    });
+    
     // NOW increment attempts with real tab ID
     await incrementLoopAttempts(targetTabId, domain, runId);
 
@@ -531,8 +713,17 @@ async function handleOpenCopart(data, sendResponse) {
         await incrementLoopAttempts(tabId, domain, runId);
 
         // Only redirect if we are somewhere unexpected (like the home page)
-        log('info', `[${runId}] Tab ${tabId} - Redirecting to dashboard`);
-        await chrome.tabs.update(tabId, { url: SITES.COPART.DASHBOARD_URL });
+        // Use navigation gate to prevent loops
+        log('info', `[${runId}] Tab ${tabId} - Redirecting to dashboard via navigation gate`);
+        const navResult = await safeNavigate(tabId, domain, SITES.COPART.DASHBOARD_URL, 'redirect_to_dashboard', runId);
+        
+        if (!navResult.success) {
+          log('error', `[${runId}] Navigation blocked by gate: ${navResult.error}`);
+          chrome.tabs.onUpdated.removeListener(listener);
+          await chrome.storage.local.remove(['pendingLogin']);
+          navigationAttempts.delete(tabId);
+          return;
+        }
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
