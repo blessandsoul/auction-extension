@@ -63,7 +63,7 @@
                 "https://login.iaai.com/*"
             ],
             "js": [
-                "content.js"
+                "content-direct-api.js"
             ],
             "run_at": "document_idle"
         }

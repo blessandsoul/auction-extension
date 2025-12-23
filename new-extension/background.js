@@ -468,6 +468,23 @@ async function handleMessage(message, sender, sendResponse) {
         sendResponse({ success: true });
         break;
 
+      case 'LOGIN_SUCCESS':
+        // Content script reports successful Direct API login
+        const { site, runId } = message.data;
+        log('info', `[${runId}] ✅ Login success reported from content script for ${site}`);
+        
+        // Clear navigation tracking (success)
+        if (sender.tab && sender.tab.id) {
+          const domain = site === 'copart' ? 'copart.com' : 'iaai.com';
+          await clearNavigationHistory(sender.tab.id, domain);
+          await setTabState(sender.tab.id, domain, { state: TabState.DONE });
+          loginCache.delete(sender.tab.id);
+          log('info', `[${runId}] Cleaned up state for tab ${sender.tab.id}`);
+        }
+        
+        sendResponse({ success: true });
+        break;
+
       default:
         sendResponse({ success: false, error: 'Unknown action' });
     }
@@ -564,19 +581,6 @@ async function handleOpenCopart(data, sendResponse) {
   log('info', `[${runId}] Opening Copart account:`, account);
 
   try {
-    // Check if we should stop due to previous loop
-    // This check happens BEFORE opening any tab
-    const existingTab = await findExistingCopartTab();
-    if (existingTab) {
-      const shouldStop = await shouldStopLoop(existingTab.id, domain);
-      if (shouldStop) {
-        const msg = `Loop prevention: Already attempted ${CONFIG.MAX_LOGIN_ATTEMPTS} times. Please close the Copart tab and try again.`;
-        log('error', `[${runId}] ${msg}`);
-        sendResponse({ success: false, error: msg });
-        return;
-      }
-    }
-
     // Fetch credentials from server with session authentication
     log('info', `[${runId}] Fetching credentials from server...`);
     const credData = await apiService.getCredentials('copart', account);
@@ -595,7 +599,7 @@ async function handleOpenCopart(data, sendResponse) {
     await clearCopartCookies();
     log('info', `[${runId}] Copart cookies cleared`);
 
-    // Store credentials in local storage
+    // Store credentials in local storage for content script
     await chrome.storage.local.set({
       pendingLogin: {
         site: 'copart',
@@ -608,29 +612,22 @@ async function handleOpenCopart(data, sendResponse) {
     });
     log('info', `[${runId}] Credentials stored in chrome.storage.local`);
 
-    // Increment loop attempts BEFORE opening tab (persistent tracking)
-    // This ensures we track even if page crashes immediately
-    const tempTabId = existingTab?.id || 0; // Will be updated after tab creation
-    
-    // Open the login page
+    // Open the login page - content script will handle Direct API auth
     const tab = await chrome.tabs.create({
       url: SITES.COPART.LOGIN_URL
     });
     const targetTabId = tab.id;
     log('info', `[${runId}] Created tab ${targetTabId}, navigating to login page`);
     
-    // Initialize tab state with runId (persists across reloads)
+    // Initialize tab state with runId (for tracking only)
     await setTabState(targetTabId, domain, {
-      state: TabState.OPENED_TARGET,
+      state: TabState.ON_LOGIN_PAGE,
       runId: runId,
       attemptCount: 0,
       lastActionAt: Date.now()
     });
-    
-    // NOW increment attempts with real tab ID
-    await incrementLoopAttempts(targetTabId, domain, runId);
 
-    // Save to Memory Cache
+    // Save to Memory Cache (for GET_LOGIN_DATA requests)
     if (targetTabId) {
       loginCache.set(targetTabId, {
         site: 'copart',
@@ -643,100 +640,20 @@ async function handleOpenCopart(data, sendResponse) {
       log('info', `[${runId}] Credentials cached in memory for tab ${targetTabId}`);
     }
 
-    // Initialize navigation attempt tracking for this tab
-    navigationAttempts.set(targetTabId, {
-      count: 0,
-      firstAttempt: Date.now(),
-      domain: 'copart.com',
-      runId: runId
-    });
-
-    // Monitor for successful login and redirect
-    const listener = async (tabId, changeInfo, tab) => {
-      if (tabId !== targetTabId) return;
-      if (!tab.url) return;
-
-      log('info', `[${runId}] Tab ${tabId} update - status: ${changeInfo.status}, url: ${tab.url.substring(0, 60)}`);
-
-      // Check persistent loop breaker FIRST (before any logic)
-      const shouldStop = await shouldStopLoop(tabId, domain);
-      if (shouldStop) {
-        log('error', `[${runId}] Loop already stopped for this tab, removing listener`);
-        chrome.tabs.onUpdated.removeListener(listener);
-        await chrome.storage.local.remove(['pendingLogin']);
-        navigationAttempts.delete(tabId);
-        return;
-      }
-
-      // Check if we're past login page
-      if (tab.url.includes('copart.com') && !tab.url.includes('/login')) {
-        log('info', `[${runId}] Tab ${tabId} - Detected navigation away from login page`);
-        
-        // Get persistent attempt count
-        const attempts = await getLoopAttempts(tabId, domain);
-        const elapsed = Date.now() - attempts.firstAttempt;
-        log('info', `[${runId}] Persistent attempts: ${attempts.count}/${CONFIG.MAX_LOGIN_ATTEMPTS}, elapsed: ${elapsed}ms`);
-        
-        // Check if we've exceeded max attempts
-        if (attempts.count >= CONFIG.MAX_LOGIN_ATTEMPTS) {
-          log('error', `[${runId}] LOOP DETECTED! Exceeded ${CONFIG.MAX_LOGIN_ATTEMPTS} navigation attempts`);
-          log('error', `[${runId}] Stopping automatic navigation to prevent infinite loop`);
-          
-          await markLoopStopped(tabId, domain, runId);
-          chrome.tabs.onUpdated.removeListener(listener);
-          await chrome.storage.local.remove(['pendingLogin']);
-          navigationAttempts.delete(tabId);
-          
-          // Show error to user
-          await chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            func: (errorMsg) => {
-              alert(`AAS Error: ${errorMsg}\n\nPlease check the console logs and contact support.`);
-            },
-            args: [`Login automation failed (loop detected). RunId: ${runId}`]
-          }).catch(() => {});
-          
-          return;
-        }
-        
-        // If we are already on the dashboard or payments page, DO NOT redirect.
-        if (tab.url.includes('member-payments') || tab.url.includes('/locations')) {
-          log('info', `[${runId}] Tab ${tabId} - Already on target page, cleaning up`);
-          chrome.tabs.onUpdated.removeListener(listener);
-          await chrome.storage.local.remove(['pendingLogin']);
-          await clearLoopTracking(tabId, domain);
-          navigationAttempts.delete(tabId);
-          return; 
-        }
-
-        // Increment persistent attempt counter BEFORE redirect
-        await incrementLoopAttempts(tabId, domain, runId);
-
-        // Only redirect if we are somewhere unexpected (like the home page)
-        // Use navigation gate to prevent loops
-        log('info', `[${runId}] Tab ${tabId} - Redirecting to dashboard via navigation gate`);
-        const navResult = await safeNavigate(tabId, domain, SITES.COPART.DASHBOARD_URL, 'redirect_to_dashboard', runId);
-        
-        if (!navResult.success) {
-          log('error', `[${runId}] Navigation blocked by gate: ${navResult.error}`);
-          chrome.tabs.onUpdated.removeListener(listener);
-          await chrome.storage.local.remove(['pendingLogin']);
-          navigationAttempts.delete(tabId);
-          return;
-        }
-      }
-    };
-    chrome.tabs.onUpdated.addListener(listener);
-    log('info', `[${runId}] Registered tab update listener for tab ${targetTabId}`);
-
-    // Cleanup after 2 minutes
+    // NO NAVIGATION MONITORING NEEDED
+    // Content script will:
+    // 1. Extract CSRF token
+    // 2. POST to /processLogin
+    // 3. Reload on success
+    // 4. Send LOGIN_SUCCESS message
+    
+    // Just cleanup after timeout
     setTimeout(async () => {
-      log('info', `[${runId}] Cleanup timeout reached, removing listener`);
-      chrome.tabs.onUpdated.removeListener(listener);
+      log('info', `[${runId}] Cleanup timeout reached`);
       await chrome.storage.local.remove(['pendingLogin']);
-      await clearLoopTracking(targetTabId, domain);
-      navigationAttempts.delete(targetTabId);
-    }, 120000);
+      await clearNavigationHistory(targetTabId, domain);
+      loginCache.delete(targetTabId);
+    }, 60000); // 1 minute cleanup
 
     sendResponse({ success: true });
   } catch (error) {
