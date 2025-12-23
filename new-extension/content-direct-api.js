@@ -211,9 +211,9 @@ function generateRunId() {
                     // Small delay to ensure storage is cleared
                     await new Promise(resolve => setTimeout(resolve, 100));
                     
-                    // Reload to apply session cookies and show logged-in view
-                    log('info', `[${runId}] Reloading page to apply session...`);
-                    window.location.reload();
+                    // Navigate to dashboard (don't reload login page!)
+                    log('info', `[${runId}] Navigating to dashboard...`);
+                    window.location.href = 'https://www.copart.com/member-payments/unpaid-invoices';
                     return { success: true };
                 } else {
                     // Response was OK but contains error
