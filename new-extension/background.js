@@ -12,6 +12,101 @@ const apiService = new ApiService(CONFIG.SERVER_URL);
 // Cache for pending logins
 const loginCache = new Map();
 
+// Loop breaker: Track navigation attempts per tab (in-memory)
+const navigationAttempts = new Map(); // tabId -> { count, firstAttempt, domain, runId }
+
+// Log capture for debugging fast-reloading pages
+const logBuffer = [];
+const MAX_LOG_BUFFER = 300;
+
+// Generate unique run ID for tracking
+function generateRunId() {
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
+// Enhanced logging that also captures to buffer
+function captureLog(level, ...args) {
+  const timestamp = new Date().toISOString();
+  const logEntry = { timestamp, level, message: args.join(' ') };
+  logBuffer.push(logEntry);
+  if (logBuffer.length > MAX_LOG_BUFFER) {
+    logBuffer.shift();
+  }
+}
+
+// Logging helper with prefix
+function log(level, ...args) {
+  const timestamp = new Date().toISOString();
+  const prefix = `[AAS-BG ${timestamp}]`;
+  if (level === 'error') {
+    console.error(prefix, ...args);
+  } else if (level === 'warn') {
+    console.warn(prefix, ...args);
+  } else {
+    console.log(prefix, ...args);
+  }
+  // Also capture to buffer
+  captureLog(level, ...args);
+}
+
+// Persistent loop tracking using chrome.storage.session (survives crashes)
+async function getLoopAttempts(tabId, domain) {
+  const key = `loop_attempts_${tabId}_${domain}`;
+  const result = await chrome.storage.session.get(key);
+  return result[key] || { count: 0, firstAttempt: Date.now(), stopped: false };
+}
+
+async function incrementLoopAttempts(tabId, domain, runId) {
+  const key = `loop_attempts_${tabId}_${domain}`;
+  const attempts = await getLoopAttempts(tabId, domain);
+  
+  // Reset if window expired
+  const elapsed = Date.now() - attempts.firstAttempt;
+  if (elapsed > CONFIG.ATTEMPT_WINDOW) {
+    attempts.count = 1;
+    attempts.firstAttempt = Date.now();
+    attempts.stopped = false;
+  } else {
+    attempts.count++;
+  }
+  
+  attempts.runId = runId;
+  await chrome.storage.session.set({ [key]: attempts });
+  
+  log('info', `[${runId}] Loop attempts for tab ${tabId}: ${attempts.count}/${CONFIG.MAX_LOGIN_ATTEMPTS}`);
+  
+  return attempts;
+}
+
+async function shouldStopLoop(tabId, domain) {
+  const attempts = await getLoopAttempts(tabId, domain);
+  return attempts.stopped || attempts.count >= CONFIG.MAX_LOGIN_ATTEMPTS;
+}
+
+async function markLoopStopped(tabId, domain, runId) {
+  const key = `loop_attempts_${tabId}_${domain}`;
+  const attempts = await getLoopAttempts(tabId, domain);
+  attempts.stopped = true;
+  await chrome.storage.session.set({ [key]: attempts });
+  
+  log('error', `[${runId}] Loop stopped for tab ${tabId}`);
+  
+  // Set extension badge to show error
+  chrome.action.setBadgeText({ text: '⚠️', tabId: tabId }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId: tabId }).catch(() => {});
+}
+
+async function clearLoopTracking(tabId, domain) {
+  const key = `loop_attempts_${tabId}_${domain}`;
+  await chrome.storage.session.remove(key);
+}
+
+// Find existing Copart tab
+async function findExistingCopartTab() {
+  const tabs = await chrome.tabs.query({ url: '*://*.copart.com/*' });
+  return tabs.length > 0 ? tabs[0] : null;
+}
+
 // Cache for current session
 let currentSession = null;
 
@@ -147,6 +242,18 @@ async function handleMessage(message, sender, sendResponse) {
         await handleGetUserSettings(sendResponse);
         break;
 
+      case 'GET_LOGS':
+        sendResponse({ success: true, logs: logBuffer });
+        break;
+
+      case 'LOG_FROM_CONTENT':
+        // Receive logs from content script for persistence
+        if (message.data) {
+          captureLog(message.data.level || 'info', `[CS] ${message.data.message}`);
+        }
+        sendResponse({ success: true });
+        break;
+
       default:
         sendResponse({ success: false, error: 'Unknown action' });
     }
@@ -232,22 +339,42 @@ async function handleLogout(sendResponse) {
 
 async function handleOpenCopart(data, sendResponse) {
   const { account } = data;
+  const runId = generateRunId();
+  const domain = 'copart.com';
 
-  console.log('[AAS] Opening Copart:', account);
+  log('info', `[${runId}] Opening Copart account:`, account);
 
   try {
-    // Fetch credentials from server
+    // Check if we should stop due to previous loop
+    // This check happens BEFORE opening any tab
+    const existingTab = await findExistingCopartTab();
+    if (existingTab) {
+      const shouldStop = await shouldStopLoop(existingTab.id, domain);
+      if (shouldStop) {
+        const msg = `Loop prevention: Already attempted ${CONFIG.MAX_LOGIN_ATTEMPTS} times. Please close the Copart tab and try again.`;
+        log('error', `[${runId}] ${msg}`);
+        sendResponse({ success: false, error: msg });
+        return;
+      }
+    }
+
+    // Fetch credentials from server with session authentication
+    log('info', `[${runId}] Fetching credentials from server...`);
     const credData = await apiService.getCredentials('copart', account);
 
+    log('info', `[${runId}] Credentials API response status:`, credData.success ? 'SUCCESS' : 'FAILED');
+    
     if (!credData.success || !credData.data) {
-      throw new Error('Credentials not found');
+      log('error', `[${runId}] Credentials not found or API returned error:`, credData);
+      throw new Error(credData.message || 'Credentials not found');
     }
 
     const creds = credData.data;
+    log('info', `[${runId}] Credentials retrieved for username:`, creds.username);
 
     // Clear Copart cookies first
     await clearCopartCookies();
-    console.log('[AAS] Copart cookies cleared');
+    log('info', `[${runId}] Copart cookies cleared`);
 
     // Store credentials in local storage
     await chrome.storage.local.set({
@@ -256,15 +383,25 @@ async function handleOpenCopart(data, sendResponse) {
         type: 'COPART',
         username: creds.username,
         password: creds.password,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        runId: runId
       }
     });
+    log('info', `[${runId}] Credentials stored in chrome.storage.local`);
 
+    // Increment loop attempts BEFORE opening tab (persistent tracking)
+    // This ensures we track even if page crashes immediately
+    const tempTabId = existingTab?.id || 0; // Will be updated after tab creation
+    
     // Open the login page
     const tab = await chrome.tabs.create({
       url: SITES.COPART.LOGIN_URL
     });
     const targetTabId = tab.id;
+    log('info', `[${runId}] Created tab ${targetTabId}, navigating to login page`);
+    
+    // NOW increment attempts with real tab ID
+    await incrementLoopAttempts(targetTabId, domain, runId);
 
     // Save to Memory Cache
     if (targetTabId) {
@@ -273,42 +410,101 @@ async function handleOpenCopart(data, sendResponse) {
         type: 'COPART',
         username: creds.username,
         password: creds.password,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        runId: runId
       });
+      log('info', `[${runId}] Credentials cached in memory for tab ${targetTabId}`);
     }
+
+    // Initialize navigation attempt tracking for this tab
+    navigationAttempts.set(targetTabId, {
+      count: 0,
+      firstAttempt: Date.now(),
+      domain: 'copart.com',
+      runId: runId
+    });
 
     // Monitor for successful login and redirect
     const listener = async (tabId, changeInfo, tab) => {
+      if (tabId !== targetTabId) return;
       if (!tab.url) return;
 
-      if (tab.url.includes('copart.com') && !tab.url.includes('/login')) {
-        console.log('[AAS] Copart login detected (or already logged in)');
+      log('info', `[${runId}] Tab ${tabId} update - status: ${changeInfo.status}, url: ${tab.url.substring(0, 60)}`);
+
+      // Check persistent loop breaker FIRST (before any logic)
+      const shouldStop = await shouldStopLoop(tabId, domain);
+      if (shouldStop) {
+        log('error', `[${runId}] Loop already stopped for this tab, removing listener`);
         chrome.tabs.onUpdated.removeListener(listener);
         await chrome.storage.local.remove(['pendingLogin']);
+        navigationAttempts.delete(tabId);
+        return;
+      }
+
+      // Check if we're past login page
+      if (tab.url.includes('copart.com') && !tab.url.includes('/login')) {
+        log('info', `[${runId}] Tab ${tabId} - Detected navigation away from login page`);
         
-        // Stop the redirect loop!
+        // Get persistent attempt count
+        const attempts = await getLoopAttempts(tabId, domain);
+        const elapsed = Date.now() - attempts.firstAttempt;
+        log('info', `[${runId}] Persistent attempts: ${attempts.count}/${CONFIG.MAX_LOGIN_ATTEMPTS}, elapsed: ${elapsed}ms`);
+        
+        // Check if we've exceeded max attempts
+        if (attempts.count >= CONFIG.MAX_LOGIN_ATTEMPTS) {
+          log('error', `[${runId}] LOOP DETECTED! Exceeded ${CONFIG.MAX_LOGIN_ATTEMPTS} navigation attempts`);
+          log('error', `[${runId}] Stopping automatic navigation to prevent infinite loop`);
+          
+          await markLoopStopped(tabId, domain, runId);
+          chrome.tabs.onUpdated.removeListener(listener);
+          await chrome.storage.local.remove(['pendingLogin']);
+          navigationAttempts.delete(tabId);
+          
+          // Show error to user
+          await chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            func: (errorMsg) => {
+              alert(`AAS Error: ${errorMsg}\n\nPlease check the console logs and contact support.`);
+            },
+            args: [`Login automation failed (loop detected). RunId: ${runId}`]
+          }).catch(() => {});
+          
+          return;
+        }
+        
         // If we are already on the dashboard or payments page, DO NOT redirect.
-        if (tab.url.includes('member-payments') || tab.url.includes('dashboard')) {
-             console.log('[AAS] Already on dashboard/payments, respecting current URL');
-             return; 
+        if (tab.url.includes('member-payments') || tab.url.includes('/locations')) {
+          log('info', `[${runId}] Tab ${tabId} - Already on target page, cleaning up`);
+          chrome.tabs.onUpdated.removeListener(listener);
+          await chrome.storage.local.remove(['pendingLogin']);
+          await clearLoopTracking(tabId, domain);
+          navigationAttempts.delete(tabId);
+          return; 
         }
 
+        // Increment persistent attempt counter BEFORE redirect
+        await incrementLoopAttempts(tabId, domain, runId);
+
         // Only redirect if we are somewhere unexpected (like the home page)
-        console.log('[AAS] Redirecting to member-payments');
+        log('info', `[${runId}] Tab ${tabId} - Redirecting to dashboard`);
         await chrome.tabs.update(tabId, { url: SITES.COPART.DASHBOARD_URL });
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
+    log('info', `[${runId}] Registered tab update listener for tab ${targetTabId}`);
 
     // Cleanup after 2 minutes
     setTimeout(async () => {
+      log('info', `[${runId}] Cleanup timeout reached, removing listener`);
       chrome.tabs.onUpdated.removeListener(listener);
       await chrome.storage.local.remove(['pendingLogin']);
+      await clearLoopTracking(targetTabId, domain);
+      navigationAttempts.delete(targetTabId);
     }, 120000);
 
     sendResponse({ success: true });
   } catch (error) {
-    console.error('[AAS] Error:', error);
+    log('error', `[${runId}] Error in handleOpenCopart:`, error.message, error.stack);
     sendResponse({ success: false, error: error.message });
   }
 }
