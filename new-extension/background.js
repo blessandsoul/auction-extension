@@ -107,6 +107,45 @@ async function findExistingCopartTab() {
   return tabs.length > 0 ? tabs[0] : null;
 }
 
+// Restrictions caching (prevents polling storm)
+const RESTRICTIONS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+let restrictionsCache = new Map(); // username -> { data, timestamp }
+
+async function getCachedRestrictions(username) {
+  // Check in-memory cache first
+  const cached = restrictionsCache.get(username);
+  if (cached && (Date.now() - cached.timestamp) < RESTRICTIONS_CACHE_TTL) {
+    log('info', `Using cached restrictions for ${username}`);
+    return cached.data;
+  }
+  
+  // Check chrome.storage.session
+  const key = `restrictions_${username}`;
+  const result = await chrome.storage.session.get(key);
+  if (result[key] && (Date.now() - result[key].timestamp) < RESTRICTIONS_CACHE_TTL) {
+    log('info', `Using session-cached restrictions for ${username}`);
+    restrictionsCache.set(username, result[key]); // Update in-memory cache
+    return result[key].data;
+  }
+  
+  // Fetch from server
+  log('info', `Fetching fresh restrictions for ${username}`);
+  const restrictionsData = await apiService.getRestrictions(username);
+  
+  // Cache in both places
+  const cacheEntry = { data: restrictionsData, timestamp: Date.now() };
+  restrictionsCache.set(username, cacheEntry);
+  await chrome.storage.session.set({ [key]: cacheEntry });
+  
+  return restrictionsData;
+}
+
+async function clearRestrictionsCache(username) {
+  restrictionsCache.delete(username);
+  const key = `restrictions_${username}`;
+  await chrome.storage.session.remove(key);
+}
+
 // Cache for current session
 let currentSession = null;
 
@@ -161,11 +200,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       }
     }
 
-    // Apply UI restrictions from server
+    // Apply UI restrictions from server (CACHED to prevent polling storm)
     if (tab.url.includes('copart.com') || tab.url.includes('iaai.com')) {
       if (currentSession && currentSession.authenticated) {
         try {
-          const restrictionsData = await apiService.getRestrictions(currentSession.username);
+          // Use cached restrictions instead of fetching every time
+          const restrictionsData = await getCachedRestrictions(currentSession.username);
           if (restrictionsData.success && restrictionsData.css) {
             chrome.scripting.insertCSS({
               target: { tabId: tabId },
@@ -174,7 +214,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             }).catch(err => {});
           }
         } catch (e) {
-          console.log('[AAS] Failed to fetch restrictions:', e);
+          log('warn', '[AAS] Failed to fetch restrictions:', e.message);
         }
       }
     }
@@ -330,6 +370,11 @@ async function handleGetSession(sendResponse) {
 }
 
 async function handleLogout(sendResponse) {
+  // Clear restrictions cache on logout
+  if (currentSession && currentSession.username) {
+    await clearRestrictionsCache(currentSession.username);
+  }
+  
   await chrome.storage.local.remove('session');
   await clearAllSiteCookies();
   sendResponse({ success: true });
@@ -657,7 +702,8 @@ async function handleGetUserSettings(sendResponse) {
     const session = result.session;
 
     if (session && session.authenticated) {
-      const restrictionsData = await apiService.getRestrictions(session.username);
+      // Use cached restrictions
+      const restrictionsData = await getCachedRestrictions(session.username);
       sendResponse({
         success: true,
         role: restrictionsData.role || 'user',

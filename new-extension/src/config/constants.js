@@ -11,7 +11,7 @@ const CONFIG = {
     : 'http://localhost:3000',   // Development server
   SESSION_DURATION: 4 * 60 * 60 * 1000, // 4 hours
   OTP_EXPIRY: 5 * 60 * 1000, // 5 minutes
-  MAX_LOGIN_ATTEMPTS: 3, // Maximum login attempts before stopping
+  MAX_LOGIN_ATTEMPTS: 2, // Maximum login attempts before stopping (reduced from 3)
   ATTEMPT_WINDOW: 30000, // 30 seconds window for counting attempts
 };
 
