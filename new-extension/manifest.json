@@ -21,7 +21,8 @@
         "https://login.iaai.com/*",
         "https://api.ipify.org/*",
         "https://api.telegram.org/*",
-        "http://localhost:3000/*"
+        "http://localhost:3000/*",
+        "http://148.251.167.227/*"
     ],
     "background": {
         "service_worker": "background.js",

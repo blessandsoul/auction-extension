@@ -3,12 +3,12 @@
  */
 
 // Toggle between development and production
-const IS_PRODUCTION = false; // Set to true when deploying
+const IS_PRODUCTION = true; // Set to true when deploying
 
 const CONFIG = {
   SERVER_URL: IS_PRODUCTION 
-    ? 'http://your-server-ip-or-domain'  // Replace with your production server
-    : 'http://localhost:3000',            // Development server
+    ? 'http://148.251.167.227'  // Your Ubuntu Server IP
+    : 'http://localhost:3000',   // Development server
   SESSION_DURATION: 4 * 60 * 60 * 1000, // 4 hours
   OTP_EXPIRY: 5 * 60 * 1000, // 5 minutes
 };
@@ -16,7 +16,7 @@ const CONFIG = {
 const SITES = {
   COPART: {
     LOGIN_URL: 'https://www.copart.com/login',
-    DASHBOARD_URL: 'https://www.copart.com/member-payments',
+    DASHBOARD_URL: 'https://www.copart.com/locations',  // Changed to avoid Three.js bug
     PROCESS_LOGIN_URL: 'https://www.copart.com/processLogin'
   },
   IAAI: {

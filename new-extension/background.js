@@ -282,9 +282,19 @@ async function handleOpenCopart(data, sendResponse) {
       if (!tab.url) return;
 
       if (tab.url.includes('copart.com') && !tab.url.includes('/login')) {
-        console.log('[AAS] Copart login detected, redirecting to member-payments');
+        console.log('[AAS] Copart login detected (or already logged in)');
         chrome.tabs.onUpdated.removeListener(listener);
         await chrome.storage.local.remove(['pendingLogin']);
+        
+        // Stop the redirect loop!
+        // If we are already on the dashboard or payments page, DO NOT redirect.
+        if (tab.url.includes('member-payments') || tab.url.includes('dashboard')) {
+             console.log('[AAS] Already on dashboard/payments, respecting current URL');
+             return; 
+        }
+
+        // Only redirect if we are somewhere unexpected (like the home page)
+        console.log('[AAS] Redirecting to member-payments');
         await chrome.tabs.update(tabId, { url: SITES.COPART.DASHBOARD_URL });
       }
     };

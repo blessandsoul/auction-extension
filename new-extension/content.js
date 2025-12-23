@@ -22,7 +22,21 @@
     // ============================================
     // PRIORITY 2: Apply UI Restrictions (requires authentication)
     // ============================================
+    // ============================================
+    // PRIORITY 2: Apply UI Restrictions (requires authentication)
+    // ============================================
     applyUserInterfaceSettings();
+
+    // SAFETY: If we are on a dashboard page, force remove the overlay immediately
+    if (window.location.href.includes('member-payments') || window.location.href.includes('dashboard')) {
+        console.log('[AAS] Dashboard detected - forcing overlay removal');
+        const overlay = document.getElementById('usalogistics-overlay');
+        const hideStyle = document.getElementById('usalogistics-hide-style');
+        if (overlay) overlay.remove();
+        if (hideStyle) hideStyle.remove();
+        document.documentElement.style.visibility = 'visible';
+        document.body.style.visibility = 'visible';
+    }
 
     async function handleCopartLogin() {
         console.log('[AAS] On Copart login page, checking for pending credentials...');

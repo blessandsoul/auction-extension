@@ -2,6 +2,14 @@
 // This script runs at document_start to show overlay immediately
 
 (function () {
+  // SKIP overlay on dashboard pages - we only need it on login page
+  if (window.location.href.includes('member-payments') || 
+      window.location.href.includes('dashboard') ||
+      window.location.href.includes('Payment') ||
+      window.location.href.includes('tobepickedup')) {
+    return; // Exit early, don't inject anything
+  }
+
   // Immediately inject CSS to hide page content
   const hideStyle = document.createElement('style');
   hideStyle.id = 'usalogistics-hide-style';
