@@ -26,8 +26,8 @@ const COPART_HIDE_CONFIG = {
         'mylots',
         'viewtype=transaction',
         'mybids',
-        '/dashboard',
-        'member-payments'
+        '/dashboard'
+        // NOTE: 'member-payments' REMOVED - this is the landing page after login
     ],
 
     // Pages to never hide (whitelist)
