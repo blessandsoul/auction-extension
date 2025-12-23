@@ -15,23 +15,21 @@ const IAAI_HIDE_CONFIG = {
     // Pages to hide for this role
     hidePages: [
         '/lostvehicles',
-        '/payment',
-        '/tobepickedup',
         '/purchasehistory',
         '/titleinstructions'
+        // NOTE: '/payment' and '/tobepickedup' REMOVED - these are landing pages after login
     ],
 
     // CSS selectors for elements to remove
+    // NOTE: Removed #PaymentContainer and .sidebar - these are needed for the payment page
     elementsToRemove: [
         '#transactionalModal',
         '#myDashboardContainer',
-        '#PaymentContainer',
         '#editContactPanel',
         '#dvLostVehiclesContent',
         '.segment-ctrl-container',
         '.tbp-total',
         '.table-th.checkbox',
-        '.sidebar',
         '.container-footer'
     ]
 };
