@@ -198,11 +198,18 @@ function generateRunId() {
                     log('info', `[${runId}] ✅ Authentication successful!`);
                     log('info', `[${runId}] Response data:`, JSON.stringify(data));
                     
-                    // Notify background of success
+                    // CRITICAL: Clear credentials BEFORE reload to prevent loop
+                    log('info', `[${runId}] Clearing credentials to prevent reload loop...`);
+                    await chrome.storage.local.remove(['pendingLogin']);
+                    
+                    // Notify background of success (will clear navigation guards)
                     chrome.runtime.sendMessage({
                         action: 'LOGIN_SUCCESS',
                         data: { site: 'copart', runId }
                     }).catch(() => {});
+                    
+                    // Small delay to ensure storage is cleared
+                    await new Promise(resolve => setTimeout(resolve, 100));
                     
                     // Reload to apply session cookies and show logged-in view
                     log('info', `[${runId}] Reloading page to apply session...`);
@@ -339,10 +346,7 @@ function generateRunId() {
                     
                     alert(`AAS Login Failed\n\n${errorMessages[loginResult.error] || loginResult.error}`);
                 }
-                
-                // Clear credentials immediately to prevent reuse
-                await chrome.storage.local.remove(['pendingLogin']);
-                log('info', `[${runId}] Cleared pendingLogin from storage`);
+
             }
         } catch (e) {
             log('error', 'Content script error:', e.message, e.stack);
