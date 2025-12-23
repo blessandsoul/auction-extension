@@ -28,6 +28,12 @@ function generateRunId() {
 }
 
 (async function () {
+    // CRITICAL: Skip execution in iframes to avoid storage access errors
+    if (window !== window.top) {
+        console.log('[AAS-CS] Running in iframe, skipping execution');
+        return;
+    }
+
     const currentUrl = window.location.href;
     const isCopartLogin = currentUrl.includes('copart.com/login');
     const isIAAILogin = currentUrl.includes('login.iaai.com');
@@ -72,16 +78,58 @@ function generateRunId() {
 
         try {
             // 1. Extract CSRF Token (CRITICAL for Copart security)
-            log('info', `[${runId}] Extracting CSRF token from page head...`);
-            const headText = document.head.textContent;
-            const tokenMatch = headText.match(/csrfToken:.*?"(?<token>.*?)"/s);
+            log('info', `[${runId}] Extracting CSRF token from page...`);
             
-            if (!tokenMatch || !tokenMatch.groups || !tokenMatch.groups.token) {
-                log('error', `[${runId}] ❌ Failed to extract CSRF Token`);
+            let csrfToken = null;
+            
+            // Method 1: Try extracting from head text content
+            const headText = document.head?.textContent || '';
+            let tokenMatch = headText.match(/csrfToken[:\s]*["']([^"']+)["']/i);
+            
+            if (tokenMatch && tokenMatch[1]) {
+                csrfToken = tokenMatch[1];
+                log('info', `[${runId}] ✅ CSRF Token found in head (method 1)`);
+            }
+            
+            // Method 2: Try meta tag
+            if (!csrfToken) {
+                const metaTag = document.querySelector('meta[name="_csrf"]') || 
+                               document.querySelector('meta[name="csrf-token"]');
+                if (metaTag) {
+                    csrfToken = metaTag.getAttribute('content');
+                    log('info', `[${runId}] ✅ CSRF Token found in meta tag (method 2)`);
+                }
+            }
+            
+            // Method 3: Try hidden input
+            if (!csrfToken) {
+                const hiddenInput = document.querySelector('input[name="_csrf"]');
+                if (hiddenInput) {
+                    csrfToken = hiddenInput.value;
+                    log('info', `[${runId}] ✅ CSRF Token found in hidden input (method 3)`);
+                }
+            }
+            
+            // Method 4: Try script tags
+            if (!csrfToken) {
+                const scripts = document.querySelectorAll('script');
+                for (const script of scripts) {
+                    const scriptText = script.textContent || '';
+                    const match = scriptText.match(/["']?csrf["']?[:\s]*["']([^"']+)["']/i);
+                    if (match && match[1]) {
+                        csrfToken = match[1];
+                        log('info', `[${runId}] ✅ CSRF Token found in script tag (method 4)`);
+                        break;
+                    }
+                }
+            }
+            
+            if (!csrfToken) {
+                log('error', `[${runId}] ❌ Failed to extract CSRF Token using all methods`);
+                log('error', `[${runId}] Head text preview: ${headText.substring(0, 200)}`);
                 return { success: false, error: 'CSRF_MISSING' };
             }
             
-            const csrfToken = tokenMatch.groups.token;
             log('info', `[${runId}] ✅ CSRF Token extracted: ${csrfToken.substring(0, 10)}...`);
 
             // 2. Prepare Payload (Copart standard format)
@@ -94,6 +142,7 @@ function generateRunId() {
 
             log('info', `[${runId}] 📤 Sending authentication request to /processLogin...`);
             log('info', `[${runId}] Payload (password hidden): ${JSON.stringify({accountType: 0, accountTypeValue: 0, username})}`);
+            log('info', `[${runId}] CSRF Token (first 20 chars): ${csrfToken.substring(0, 20)}...`);
 
             // 3. Send Direct API Request
             const response = await fetch("https://www.copart.com/processLogin", {
@@ -109,32 +158,79 @@ function generateRunId() {
             });
 
             log('info', `[${runId}] 📥 Response status: ${response.status}`);
+            log('info', `[${runId}] Response URL: ${response.url}`);
+            log('info', `[${runId}] Response headers:`, JSON.stringify([...response.headers.entries()]));
 
-            const data = await response.json();
-            log('info', `[${runId}] Response data:`, JSON.stringify(data).substring(0, 200));
+            // Try to parse response
+            let data;
+            const contentType = response.headers.get('content-type');
+            log('info', `[${runId}] Content-Type: ${contentType}`);
+            
+            try {
+                const responseText = await response.text();
+                log('info', `[${runId}] Raw response (first 500 chars): ${responseText.substring(0, 500)}`);
+                
+                if (contentType && contentType.includes('application/json')) {
+                    data = JSON.parse(responseText);
+                    log('info', `[${runId}] Parsed JSON response:`, JSON.stringify(data));
+                } else {
+                    log('warn', `[${runId}] Response is not JSON, treating as error`);
+                    data = { error: 'Non-JSON response', rawText: responseText.substring(0, 200) };
+                }
+            } catch (parseError) {
+                log('error', `[${runId}] Failed to parse response:`, parseError.message);
+                return { success: false, error: 'PARSE_ERROR' };
+            }
 
             // 4. Validate Response
-            if (response.ok && data.data && !data.data.error) {
-                log('info', `[${runId}] ✅ Authentication successful! Reloading page...`);
-                
-                // Notify background of success
-                chrome.runtime.sendMessage({
-                    action: 'LOGIN_SUCCESS',
-                    data: { site: 'copart', runId }
-                }).catch(() => {});
-                
-                // Reload to apply session cookies and show logged-in view
-                window.location.reload();
-                return { success: true };
-            } else {
-                const errorMsg = data.data?.error || data.error || 'UNKNOWN_ERROR';
+            log('info', `[${runId}] Checking authentication result...`);
+            log('info', `[${runId}] Response type: ${response.type}`);
+            log('info', `[${runId}] Response redirected: ${response.redirected}`);
+            log('info', `[${runId}] Response OK: ${response.ok}`);
+            
+            // Check response data for success
+            // Copart returns: { data: { error: null/undefined } } on success
+            // or { data: { error: "message" } } on failure
+            
+            if (response.ok && data && data.data) {
+                // Check if there's an error in the response
+                if (!data.data.error) {
+                    log('info', `[${runId}] ✅ Authentication successful!`);
+                    log('info', `[${runId}] Response data:`, JSON.stringify(data));
+                    
+                    // Notify background of success
+                    chrome.runtime.sendMessage({
+                        action: 'LOGIN_SUCCESS',
+                        data: { site: 'copart', runId }
+                    }).catch(() => {});
+                    
+                    // Reload to apply session cookies and show logged-in view
+                    log('info', `[${runId}] Reloading page to apply session...`);
+                    window.location.reload();
+                    return { success: true };
+                } else {
+                    // Response was OK but contains error
+                    const errorMsg = data.data.error;
+                    log('error', `[${runId}] ❌ Authentication failed: ${errorMsg}`);
+                    log('error', `[${runId}] Full response:`, JSON.stringify(data));
+                    return { success: false, error: errorMsg };
+                }
+            } else if (!response.ok) {
+                // HTTP error status
+                const errorMsg = data?.data?.error || data?.error || `HTTP ${response.status}`;
                 log('error', `[${runId}] ❌ Authentication failed: ${errorMsg}`);
                 log('error', `[${runId}] Full response:`, JSON.stringify(data));
                 return { success: false, error: errorMsg };
+            } else {
+                // Unexpected response format
+                log('error', `[${runId}] ❌ Unexpected response format`);
+                log('error', `[${runId}] Full response:`, JSON.stringify(data));
+                return { success: false, error: 'UNEXPECTED_RESPONSE' };
             }
 
         } catch (err) {
             log('error', `[${runId}] ❌ Network error:`, err.message);
+            log('error', `[${runId}] Stack trace:`, err.stack);
             return { success: false, error: 'NETWORK_ERROR' };
         }
     }
@@ -154,11 +250,16 @@ function generateRunId() {
             log('warn', 'chrome.storage.session not available, falling back to sessionStorage');
         }
         
-        // Also check sessionStorage as fallback
-        const alreadyRan = sessionStorage.getItem('aas_login_attempted');
-        if (alreadyRan === 'true') {
-            log('warn', 'Login already attempted on this page (sessionStorage guard), skipping');
-            return;
+        // Also check sessionStorage as fallback (with error handling)
+        try {
+            const alreadyRan = sessionStorage.getItem('aas_login_attempted');
+            if (alreadyRan === 'true') {
+                log('warn', 'Login already attempted on this page (sessionStorage guard), skipping');
+                return;
+            }
+        } catch (e) {
+            log('warn', 'sessionStorage access denied, continuing anyway');
+            // Continue execution - we have chrome.storage.session as primary guard
         }
         
         log('info', 'On Copart login page, checking for pending credentials...');
@@ -208,8 +309,13 @@ function generateRunId() {
                     log('warn', `[${runId}] Could not set session storage guard:`, e.message);
                 }
                 
-                sessionStorage.setItem('aas_login_attempted', 'true');
-                log('info', `[${runId}] Set sessionStorage flag to prevent re-run`);
+                try {
+                    sessionStorage.setItem('aas_login_attempted', 'true');
+                    log('info', `[${runId}] Set sessionStorage flag to prevent re-run`);
+                } catch (e) {
+                    log('warn', `[${runId}] Could not set sessionStorage flag:`, e.message);
+                    // Not critical - chrome.storage.session is the primary guard
+                }
                 
                 // Show overlay
                 showOverlay();
@@ -244,12 +350,14 @@ function generateRunId() {
         }
     }
 
-    // Helper to get current tab ID
+    // Helper to get current tab ID (content scripts can't use chrome.tabs directly)
     async function getCurrentTabId() {
         try {
-            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-            return tabs[0]?.id || 0;
+            // Ask background script for our tab ID
+            const response = await chrome.runtime.sendMessage({ action: 'GET_TAB_ID' });
+            return response?.tabId || 0;
         } catch (e) {
+            log('warn', 'Could not get tab ID from background:', e.message);
             return 0;
         }
     }

@@ -481,6 +481,11 @@ async function handleMessage(message, sender, sendResponse) {
         sendResponse({ success: true });
         break;
 
+      case 'GET_TAB_ID':
+        // Content script asking for its own tab ID
+        sendResponse({ success: true, tabId: sender.tab?.id || 0 });
+        break;
+
       case 'LOGIN_SUCCESS':
         // Content script reports successful Direct API login
         const { site, runId } = message.data;
