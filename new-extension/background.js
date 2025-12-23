@@ -60,27 +60,27 @@ async function setTabState(tabId, domain, updates) {
 async function canNavigate(tabId, domain, reason, runId) {
   const now = Date.now();
   const history = await getNavigationHistory(tabId, domain);
-  
+
   if (history.blocked) {
     log('error', `[NAV-GATE] Tab ${tabId} is BLOCKED - navigation denied`);
     return { allowed: false, reason: 'Tab is blocked due to previous loop detection' };
   }
-  
+
   const recentShort = history.attempts.filter(a => (now - a.timestamp) < NAVIGATION_LIMITS.SHORT_WINDOW);
   const recentLong = history.attempts.filter(a => (now - a.timestamp) < NAVIGATION_LIMITS.LONG_WINDOW);
-  
+
   if (recentShort.length >= NAVIGATION_LIMITS.MAX_SHORT) {
     log('error', `[NAV-GATE] Tab ${tabId} exceeded SHORT limit: ${recentShort.length} in 15s`);
     await blockTab(tabId, domain, runId, 'Exceeded 1 navigation per 15 seconds');
     return { allowed: false, reason: 'Too many navigations in short window' };
   }
-  
+
   if (recentLong.length >= NAVIGATION_LIMITS.MAX_LONG) {
     log('error', `[NAV-GATE] Tab ${tabId} exceeded LONG limit: ${recentLong.length} in 60s`);
     await blockTab(tabId, domain, runId, 'Exceeded 3 navigations per 60 seconds');
     return { allowed: false, reason: 'Too many navigations in long window' };
   }
-  
+
   log('info', `[NAV-GATE] Tab ${tabId} navigation ALLOWED - ${recentShort.length}/1 (15s), ${recentLong.length}/3 (60s)`);
   return { allowed: true };
 }
@@ -88,18 +88,18 @@ async function canNavigate(tabId, domain, reason, runId) {
 async function recordNavigation(tabId, domain, url, reason, runId) {
   const key = `nav_history_${tabId}_${domain}`;
   const history = await getNavigationHistory(tabId, domain);
-  
+
   history.attempts.push({
     timestamp: Date.now(),
     url,
     reason,
     runId
   });
-  
+
   if (history.attempts.length > 10) {
     history.attempts = history.attempts.slice(-10);
   }
-  
+
   await chrome.storage.session.set({ [key]: history });
   log('info', `[NAV-GATE] Recorded: ${reason} -> ${url.substring(0, 50)}`);
 }
@@ -107,24 +107,24 @@ async function recordNavigation(tabId, domain, url, reason, runId) {
 async function blockTab(tabId, domain, runId, reason) {
   const key = `nav_history_${tabId}_${domain}`;
   const history = await getNavigationHistory(tabId, domain);
-  
+
   history.blocked = true;
   history.blockReason = reason;
   history.blockedAt = Date.now();
-  
+
   await chrome.storage.session.set({ [key]: history });
   await setTabState(tabId, domain, { state: TabState.BLOCKED });
-  
-  chrome.action.setBadgeText({ text: 'LOOP', tabId }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId }).catch(() => {});
-  
+
+  chrome.action.setBadgeText({ text: 'LOOP', tabId }).catch(() => { });
+  chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId }).catch(() => { });
+
   log('error', `[NAV-GATE] ⛔ Tab ${tabId} BLOCKED: ${reason}`);
-  
+
   chrome.scripting.executeScript({
     target: { tabId },
     func: (msg) => alert(`AAS Loop Detected\n\n${msg}\n\nAutomatic navigation stopped. Close tab and try again.`),
     args: [reason]
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 async function clearNavigationHistory(tabId, domain) {
@@ -132,22 +132,22 @@ async function clearNavigationHistory(tabId, domain) {
     `nav_history_${tabId}_${domain}`,
     `tab_state_${tabId}_${domain}`
   ]);
-  chrome.action.setBadgeText({ text: '', tabId }).catch(() => {});
+  chrome.action.setBadgeText({ text: '', tabId }).catch(() => { });
   log('info', `[NAV-GATE] Cleared history for tab ${tabId}`);
 }
 
 async function safeNavigate(tabId, domain, url, reason, runId) {
   log('info', `[NAV-GATE] Navigation request: tab=${tabId}, reason=${reason}`);
-  
+
   const check = await canNavigate(tabId, domain, reason, runId);
-  
+
   if (!check.allowed) {
     log('error', `[NAV-GATE] Navigation DENIED: ${check.reason}`);
     return { success: false, error: check.reason };
   }
-  
+
   await recordNavigation(tabId, domain, url, reason, runId);
-  
+
   try {
     await chrome.tabs.update(tabId, { url });
     log('info', `[NAV-GATE] Navigation executed successfully`);
@@ -160,26 +160,26 @@ async function safeNavigate(tabId, domain, url, reason, runId) {
 
 async function shouldPerformAction(tabId, domain, action) {
   const state = await getTabState(tabId, domain);
-  
+
   if (action === 'SUBMIT_LOGIN') {
     if ([TabState.SUBMITTED_LOGIN, TabState.WAITING_REDIRECT, TabState.DONE, TabState.BLOCKED].includes(state.state)) {
       log('warn', `[NAV-GATE] SUBMIT_LOGIN denied - state is ${state.state}`);
       return false;
     }
-    
+
     if (state.attemptCount >= 2) {
       log('warn', `[NAV-GATE] SUBMIT_LOGIN denied - already attempted ${state.attemptCount} times`);
       return false;
     }
-    
+
     return true;
   }
-  
+
   if (action === 'NAVIGATE' && state.state === TabState.BLOCKED) {
     log('warn', `[NAV-GATE] NAVIGATE denied - tab is blocked`);
     return false;
   }
-  
+
   return true;
 }
 
@@ -233,7 +233,7 @@ async function getLoopAttempts(tabId, domain) {
 async function incrementLoopAttempts(tabId, domain, runId) {
   const key = `loop_attempts_${tabId}_${domain}`;
   const attempts = await getLoopAttempts(tabId, domain);
-  
+
   // Reset if window expired
   const elapsed = Date.now() - attempts.firstAttempt;
   if (elapsed > CONFIG.ATTEMPT_WINDOW) {
@@ -243,12 +243,12 @@ async function incrementLoopAttempts(tabId, domain, runId) {
   } else {
     attempts.count++;
   }
-  
+
   attempts.runId = runId;
   await chrome.storage.session.set({ [key]: attempts });
-  
+
   log('info', `[${runId}] Loop attempts for tab ${tabId}: ${attempts.count}/${CONFIG.MAX_LOGIN_ATTEMPTS}`);
-  
+
   return attempts;
 }
 
@@ -262,12 +262,12 @@ async function markLoopStopped(tabId, domain, runId) {
   const attempts = await getLoopAttempts(tabId, domain);
   attempts.stopped = true;
   await chrome.storage.session.set({ [key]: attempts });
-  
+
   log('error', `[${runId}] Loop stopped for tab ${tabId}`);
-  
+
   // Set extension badge to show error
-  chrome.action.setBadgeText({ text: '⚠️', tabId: tabId }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId: tabId }).catch(() => {});
+  chrome.action.setBadgeText({ text: '⚠️', tabId: tabId }).catch(() => { });
+  chrome.action.setBadgeBackgroundColor({ color: '#dc2626', tabId: tabId }).catch(() => { });
 }
 
 async function clearLoopTracking(tabId, domain) {
@@ -292,7 +292,7 @@ async function getCachedRestrictions(username) {
     log('info', `Using cached restrictions for ${username}`);
     return cached.data;
   }
-  
+
   // Check chrome.storage.session
   const key = `restrictions_${username}`;
   const result = await chrome.storage.session.get(key);
@@ -301,16 +301,16 @@ async function getCachedRestrictions(username) {
     restrictionsCache.set(username, result[key]); // Update in-memory cache
     return result[key].data;
   }
-  
+
   // Fetch from server
   log('info', `Fetching fresh restrictions for ${username}`);
   const restrictionsData = await apiService.getRestrictions(username);
-  
+
   // Cache in both places
   const cacheEntry = { data: restrictionsData, timestamp: Date.now() };
   restrictionsCache.set(username, cacheEntry);
   await chrome.storage.session.set({ [key]: cacheEntry });
-  
+
   return restrictionsData;
 }
 
@@ -340,7 +340,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   await chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => { });
 
 // Check if URL is allowed
 function isUrlAllowed(url, site) {
@@ -385,7 +385,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
               target: { tabId: tabId },
               css: restrictionsData.css,
               origin: "AUTHOR"
-            }).catch(err => {});
+            }).catch(err => { });
           }
         } catch (e) {
           log('warn', '[AAS] Failed to fetch restrictions:', e.message);
@@ -398,6 +398,19 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 // Clear cookies on extension install/update
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('[AAS] Extension installed/updated, clearing cookies');
+
+  // Enable access to chrome.storage.session for content scripts
+  if (chrome.storage.session.setAccessLevel) {
+    try {
+      await chrome.storage.session.setAccessLevel({
+        accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS'
+      });
+      console.log('[AAS] Enabled session storage access for content scripts');
+    } catch (error) {
+      console.warn('[AAS] Could not set access level:', error);
+    }
+  }
+
   await clearAllSiteCookies();
   const res = await chrome.storage.local.get('session');
   currentSession = res.session || null;
@@ -472,7 +485,7 @@ async function handleMessage(message, sender, sendResponse) {
         // Content script reports successful Direct API login
         const { site, runId } = message.data;
         log('info', `[${runId}] ✅ Login success reported from content script for ${site}`);
-        
+
         // Clear navigation tracking (success)
         if (sender.tab && sender.tab.id) {
           const domain = site === 'copart' ? 'copart.com' : 'iaai.com';
@@ -481,7 +494,7 @@ async function handleMessage(message, sender, sendResponse) {
           loginCache.delete(sender.tab.id);
           log('info', `[${runId}] Cleaned up state for tab ${sender.tab.id}`);
         }
-        
+
         sendResponse({ success: true });
         break;
 
@@ -565,7 +578,7 @@ async function handleLogout(sendResponse) {
   if (currentSession && currentSession.username) {
     await clearRestrictionsCache(currentSession.username);
   }
-  
+
   await chrome.storage.local.remove('session');
   await clearAllSiteCookies();
   sendResponse({ success: true });
@@ -586,7 +599,7 @@ async function handleOpenCopart(data, sendResponse) {
     const credData = await apiService.getCredentials('copart', account);
 
     log('info', `[${runId}] Credentials API response status:`, credData.success ? 'SUCCESS' : 'FAILED');
-    
+
     if (!credData.success || !credData.data) {
       log('error', `[${runId}] Credentials not found or API returned error:`, credData);
       throw new Error(credData.message || 'Credentials not found');
@@ -618,7 +631,13 @@ async function handleOpenCopart(data, sendResponse) {
     });
     const targetTabId = tab.id;
     log('info', `[${runId}] Created tab ${targetTabId}, navigating to login page`);
-    
+
+    // CRITICAL: Clear any previous login guard for this NEW tab
+    // This ensures the content script will attempt login
+    const sessionKey = `aas_login_attempted_${targetTabId}`;
+    await chrome.storage.session.remove(sessionKey);
+    log('info', `[${runId}] Cleared session guard for tab ${targetTabId}`);
+
     // Initialize tab state with runId (for tracking only)
     await setTabState(targetTabId, domain, {
       state: TabState.ON_LOGIN_PAGE,
@@ -646,7 +665,7 @@ async function handleOpenCopart(data, sendResponse) {
     // 2. POST to /processLogin
     // 3. Reload on success
     // 4. Send LOGIN_SUCCESS message
-    
+
     // Just cleanup after timeout
     setTimeout(async () => {
       log('info', `[${runId}] Cleanup timeout reached`);
@@ -831,7 +850,7 @@ async function collectUserInfo() {
   let ip = 'unknown';
   try {
     ip = await apiService.getUserIP();
-  } catch (e) {}
+  } catch (e) { }
 
   return {
     ip,
@@ -852,7 +871,7 @@ async function clearCopartCookies() {
         const url = `https://${cookie.domain.startsWith('.') ? cookie.domain.slice(1) : cookie.domain}${cookie.path}`;
         await chrome.cookies.remove({ url, name: cookie.name });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 }
 
@@ -868,6 +887,6 @@ async function clearAllSiteCookies() {
           name: cookie.name
         });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 }

@@ -66,6 +66,28 @@
                 "content-direct-api.js"
             ],
             "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "https://www.copart.com/*",
+                "https://copart.com/*"
+            ],
+            "js": [
+                "src/roles/logistics/copart/hideElements.js",
+                "src/roles/roleManager.js"
+            ],
+            "run_at": "document_idle"
+        },
+        {
+            "matches": [
+                "https://www.iaai.com/*",
+                "https://iaai.com/*"
+            ],
+            "js": [
+                "src/roles/logistics/iaai/hideElements.js",
+                "src/roles/roleManager.js"
+            ],
+            "run_at": "document_idle"
         }
     ]
 }
