@@ -68,6 +68,7 @@ function generateRunId() {
      */
     async function attemptDirectCopartLogin(username, password, runId) {
         log('info', `[${runId}] 🚀 Starting Direct API Authentication...`);
+        log('info', `[${runId}] Username: ${username}`); // Log username for debugging
 
         try {
             // 1. Extract CSRF Token (CRITICAL for Copart security)
@@ -92,6 +93,7 @@ function generateRunId() {
             });
 
             log('info', `[${runId}] 📤 Sending authentication request to /processLogin...`);
+            log('info', `[${runId}] Payload (password hidden): ${JSON.stringify({accountType: 0, accountTypeValue: 0, username})}`);
 
             // 3. Send Direct API Request
             const response = await fetch("https://www.copart.com/processLogin", {
@@ -127,6 +129,7 @@ function generateRunId() {
             } else {
                 const errorMsg = data.data?.error || data.error || 'UNKNOWN_ERROR';
                 log('error', `[${runId}] ❌ Authentication failed: ${errorMsg}`);
+                log('error', `[${runId}] Full response:`, JSON.stringify(data));
                 return { success: false, error: errorMsg };
             }
 
