@@ -1,16 +1,30 @@
 // Early overlay injection - runs before page loads
 // This script runs at document_start to show overlay immediately
+// CRITICAL: Only run on login pages to avoid interfering with Copart's dashboard
 
 (function () {
-  // SKIP overlay on dashboard pages - we only need it on login page
-  if (window.location.href.includes('member-payments') || 
-      window.location.href.includes('dashboard') ||
-      window.location.href.includes('Payment') ||
-      window.location.href.includes('tobepickedup')) {
+  const currentUrl = window.location.href;
+  
+  // CRITICAL: Check URL FIRST before touching DOM at all
+  // Exit immediately if NOT on login page
+  const isLoginPage = currentUrl.includes('/login') || currentUrl.includes('Identity/Account/Login');
+  
+  if (!isLoginPage) {
+    // Not a login page - exit without touching DOM
+    // This prevents interference with Copart's dashboard Three.js
+    return;
+  }
+  
+  // Also skip if already on success pages
+  if (currentUrl.includes('member-payments') || 
+      currentUrl.includes('dashboard') ||
+      currentUrl.includes('Payment') ||
+      currentUrl.includes('tobepickedup') ||
+      currentUrl.includes('/locations')) {
     return; // Exit early, don't inject anything
   }
 
-  // Immediately inject CSS to hide page content
+  // NOW safe to inject CSS (only on login pages)
   const hideStyle = document.createElement('style');
   hideStyle.id = 'usalogistics-hide-style';
   hideStyle.textContent = `
@@ -95,7 +109,7 @@
     document.addEventListener('DOMContentLoaded', injectOverlay);
   }
 
-  // Failsafe
+  // Failsafe - only on login pages
   setTimeout(() => {
     const existingHideStyle = document.getElementById('usalogistics-hide-style');
     if (existingHideStyle) existingHideStyle.remove();
