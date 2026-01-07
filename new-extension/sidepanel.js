@@ -273,6 +273,8 @@ function startSessionTimer(expiry) {
     sessionTimer = setInterval(update, 60000);
 }
 
+
+
 // --- Dashboard Actions ---
 
 logoutBtn?.addEventListener('click', async () => {
@@ -294,6 +296,7 @@ setupAccountBtn('copart2-btn', 'copart2');
 
 document.getElementById('iaai-btn')?.addEventListener('click', () => {
     showStatus('Opening IAAI I...');
+
     chrome.runtime.sendMessage({ action: 'OPEN_IAAI' });
 });
 
@@ -303,6 +306,13 @@ function openAccount(acc) {
         'copart2': 'COPART II'
     };
     showStatus('Opening ' + (displayNames[acc] || acc) + '...');
+
+
+    // Live Indicator - Optimistic Update
+    document.querySelectorAll('.card').forEach(c => c.classList.remove('active-account'));
+    const btnId = acc === 'copart1' ? 'copart1-btn' : (acc === 'copart2' ? 'copart2-btn' : null);
+    if (btnId) document.getElementById(btnId)?.classList.add('active-account');
+
     chrome.runtime.sendMessage({ action: 'OPEN_COPART', data: { account: acc } });
 }
 
@@ -323,4 +333,31 @@ function showStatus(msg) {
 
 document.addEventListener('DOMContentLoaded', () => {
     checkSession();
+
+    updateLiveIndicator();
 });
+
+// --- Live Indicator Logic ---
+
+async function updateLiveIndicator() {
+    try {
+        const res = await chrome.storage.local.get('activeCopartAccount');
+        const activeAccount = res.activeCopartAccount;
+
+        // Reset all
+        document.querySelectorAll('.card').forEach(c => c.classList.remove('active-account'));
+
+        if (activeAccount) {
+            const btnId = activeAccount === 'copart1' ? 'copart1-btn' :
+                activeAccount === 'copart2' ? 'copart2-btn' : null;
+
+            if (btnId) {
+                const btn = document.getElementById(btnId);
+                if (btn) btn.classList.add('active-account');
+            }
+        }
+    } catch (e) {
+        console.error('Failed to update live indicator:', e);
+    }
+}
+

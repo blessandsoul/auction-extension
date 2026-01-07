@@ -60,10 +60,11 @@
     --foreground: 10% 0.01 240;
     /* Almost black */
 
-    --card: 100% 0 0;
+    --card: 98% 0.005 240;
+    /* Slightly off-white for depth */
     --card-foreground: 10% 0.01 240;
-    --card-border: 92% 0.005 240;
-    /* Subtle border */
+    --card-border: 94% 0.01 240;
+
 
     --popover: 100% 0 0;
     --popover-foreground: 10% 0.01 240;
@@ -90,12 +91,14 @@
     --input: 90% 0.01 240;
     --ring: 10% 0.01 240;
 
+    /* Live Indicator Green */
+    --live-green: 65% 0.18 145;
+
     /* Effects */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-    --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.08);
-    /* Requested soft shadow */
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+    --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.04);
   }
 
   @media (prefers-color-scheme: dark) {
@@ -106,9 +109,9 @@
       --foreground: 98% 0 0;
       /* #fafafa */
 
-      --card: 14% 0.01 240;
+      --card: 16% 0.01 240;
       --card-foreground: 98% 0 0;
-      --card-border: 20% 0.02 240;
+      --card-border: 24% 0.02 240;
 
       --popover: 12% 0.01 240;
       --popover-foreground: 98% 0 0;
@@ -132,15 +135,9 @@
       --border: 20% 0.02 240;
       --input: 20% 0.02 240;
       --ring: 80% 0.01 240;
+      --live-green: 70% 0.18 145;
 
       --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.4);
-    }
-
-    html.light {
-      /* Force Light Mode Overrides if user toggles */
-      --background: 100% 0 0;
-      --foreground: 10% 0.01 240;
-      /* ... repeat light vars if manual toggle needed, effectively handled by class strategy usually */
     }
   }
 
@@ -215,12 +212,14 @@
     border-radius: var(--radius-md);
     font-size: 0.875rem;
     font-weight: 500;
-    height: 2.5rem;
+    height: 2.75rem;
+    /* Larger Click Area */
     padding: 0 var(--space-4);
     transition: all 0.2s;
     width: 100%;
     position: relative;
     overflow: hidden;
+    cursor: pointer;
   }
 
   .btn:active {
@@ -234,10 +233,12 @@
   .btn-primary {
     background-color: oklch(var(--primary));
     color: oklch(var(--primary-foreground));
+    box-shadow: 0 4px 6px -1px oklch(var(--primary) / 0.2);
   }
 
   .btn-primary:hover {
     opacity: 0.9;
+    box-shadow: 0 6px 8px -1px oklch(var(--primary) / 0.3);
   }
 
   .btn-secondary {
@@ -267,10 +268,10 @@
   /* Inputs */
   .input {
     width: 100%;
-    height: 2.5rem;
+    height: 2.75rem;
     border-radius: var(--radius-md);
     border: 1px solid oklch(var(--border));
-    background-color: transparent;
+    background-color: oklch(var(--card));
     padding: 0 var(--space-3);
     font-size: 0.875rem;
     transition: border-color 0.2s, box-shadow 0.2s;
@@ -297,29 +298,35 @@
     background-color: oklch(var(--card));
     color: oklch(var(--card-foreground));
     box-shadow: var(--shadow-sm);
-    padding: var(--space-6) var(--space-4);
+    padding: var(--space-4);
     display: flex;
     align-items: center;
-    gap: var(--space-4);
+    gap: var(--space-3);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     cursor: pointer;
     overflow: hidden;
+    height: 80px;
+    /* Fixed height for consistency */
   }
 
   .card:hover {
     transform: translateY(-2px);
-    box-shadow: var(--shadow-soft);
-    border-color: oklch(var(--primary) / 0.2);
-    /* 3D Hover Effect approximation */
-    background-color: oklch(var(--accent) / 0.5);
+    box-shadow: var(--shadow-md);
+    border-color: oklch(var(--primary) / 0.1);
+  }
+
+  .card.active-account {
+    border-color: oklch(var(--live-green));
+    box-shadow: 0 0 0 1px oklch(var(--live-green) / 0.3), var(--shadow-md);
+    background-color: oklch(var(--live-green) / 0.03);
   }
 
   .card .icon-box {
-    width: 52px;
-    height: 52px;
-    min-width: 52px;
-    border-radius: var(--radius-lg);
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    border-radius: var(--radius-md);
     background-color: oklch(var(--secondary));
     color: oklch(var(--primary));
     display: flex;
@@ -330,39 +337,105 @@
   }
 
   .card .icon-box svg {
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
   }
 
   .card:hover .icon-box {
     background-color: oklch(var(--primary));
     color: oklch(var(--primary-foreground));
     transform: scale(1.05);
-    box-shadow: 0 4px 16px oklch(var(--primary) / 0.25);
   }
 
   .card-content {
     flex: 1;
     display: flex;
     flex-direction: column;
+    justify-content: center;
     gap: 2px;
     text-align: left;
+    height: 100%;
   }
 
   .card-title {
     font-weight: 600;
-    font-size: 1.1rem;
+    font-size: 1rem;
     letter-spacing: -0.01em;
+  }
+
+  .card-subtitle {
+    font-size: 0.75rem;
+    color: oklch(var(--muted-foreground));
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .live-indicator-wrapper {
+    display: none;
+    /* Hidden by default */
+    align-items: center;
+    gap: 6px;
+    color: oklch(var(--live-green));
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .active-account .live-indicator-wrapper {
+    display: flex;
+    /* Show when active */
+  }
+
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    background-color: oklch(var(--live-green));
+    border-radius: 50%;
+    position: relative;
+  }
+
+  .live-dot::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    right: -3px;
+    bottom: -3px;
+    border-radius: 50%;
+    border: 1.5px solid oklch(var(--live-green));
+    opacity: 0.5;
+    animation: pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
   }
 
   .card-arrow {
     color: oklch(var(--muted-foreground));
     transition: transform 0.2s;
+    opacity: 0.5;
+  }
+
+  .active-account .card-arrow {
+    display: none;
   }
 
   .card:hover .card-arrow {
     color: oklch(var(--primary));
     transform: translateX(4px);
+    opacity: 1;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 
   /* OTP Input */
@@ -465,7 +538,7 @@
 
   /* Glassmorphism */
   .glass {
-    background: oklch(var(--background) / 0.8);
+    background: oklch(var(--background) / 0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid oklch(var(--border) / 0.5);
@@ -476,6 +549,18 @@
   @keyframes spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  @keyframes pulse {
+    0% {
+      transform: scale(0.5);
+      opacity: 0.8;
+    }
+
+    100% {
+      transform: scale(1.5);
+      opacity: 0;
     }
   }
 

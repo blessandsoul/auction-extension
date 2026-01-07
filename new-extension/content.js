@@ -7,7 +7,7 @@ function log(level, ...args) {
     const timestamp = new Date().toISOString();
     const prefix = `[AAS-CS ${timestamp}]`;
     const message = args.join(' ');
-    
+
     if (level === 'error') {
         console.error(prefix, ...args);
     } else if (level === 'warn') {
@@ -15,12 +15,12 @@ function log(level, ...args) {
     } else {
         console.log(prefix, ...args);
     }
-    
+
     // Send to background for persistence (survives page reload)
     chrome.runtime.sendMessage({
         action: 'LOG_FROM_CONTENT',
         data: { level, message }
-    }).catch(() => {}); // Ignore if background not ready
+    }).catch(() => { }); // Ignore if background not ready
 }
 
 // DOM-based login detection (more reliable than URL)
@@ -29,7 +29,7 @@ function isOnLoginPage() {
     const usernameField = document.querySelector('#username, input[name="username"], input[type="email"][name*="user"]');
     const passwordField = document.querySelector('#password, input[name="password"], input[type="password"]');
     const loginButton = document.querySelector('button[type="submit"], [data-uname="loginButton"], input[type="submit"]');
-    
+
     return !!(usernameField && passwordField) || !!loginButton;
 }
 
@@ -37,7 +37,7 @@ function isLoggedIn() {
     // Check for logged-in indicators
     const userMenu = document.querySelector('.user-menu, .account-menu, [class*="user-name"], [class*="logout"]');
     const dashboardElements = document.querySelector('[class*="dashboard"], [class*="member-payments"]');
-    
+
     return !!(userMenu || dashboardElements);
 }
 
@@ -83,7 +83,7 @@ function isLoggedIn() {
         // PERSISTENT IDEMPOTENT GUARD: Check chrome.storage.session (survives crashes)
         const tabId = await getCurrentTabId();
         const sessionKey = `aas_login_attempted_${tabId}`;
-        
+
         try {
             const result = await chrome.storage.session.get(sessionKey);
             if (result[sessionKey] === true) {
@@ -93,16 +93,16 @@ function isLoggedIn() {
         } catch (e) {
             log('warn', 'chrome.storage.session not available, falling back to sessionStorage');
         }
-        
+
         // Also check sessionStorage as fallback
         const alreadyRan = sessionStorage.getItem('aas_login_attempted');
         if (alreadyRan === 'true') {
             log('warn', 'Login already attempted on this page (sessionStorage guard), skipping');
             return;
         }
-        
+
         log('info', 'On Copart login page, checking for pending credentials...');
-        
+
         // Wait for page to be initially ready
         log('info', 'Waiting for page to load...');
         await new Promise(r => setTimeout(r, 2000));
@@ -122,7 +122,7 @@ function isLoggedIn() {
                 try {
                     const response = await chrome.runtime.sendMessage({ action: 'GET_LOGIN_DATA' });
                     log('info', `[${runId}] Background response:`, response?.success ? 'SUCCESS' : 'FAILED');
-                    
+
                     if (response && response.success && response.data) {
                         log('info', `[${runId}] Received credentials from background!`);
                         pending = response.data;
@@ -152,14 +152,14 @@ function isLoggedIn() {
                 } catch (e) {
                     log('warn', `[${runId}] Could not set session storage guard:`, e.message);
                 }
-                
+
                 sessionStorage.setItem('aas_login_attempted', 'true');
                 log('info', `[${runId}] Set sessionStorage flag to prevent re-run`);
-                
+
                 // Wait for login form to be fully loaded
                 log('info', `[${runId}] Waiting for login form to be ready...`);
                 const formReady = await waitForLoginForm();
-                
+
                 if (!formReady) {
                     log('error', `[${runId}] Login form did not load in time`);
                     return;
@@ -171,7 +171,7 @@ function isLoggedIn() {
 
                 log('info', `[${runId}] Executing Copart auto-login`);
                 await executeCopartLogin(pending.username, pending.password, runId);
-                
+
                 // Clear credentials immediately to prevent reuse
                 await chrome.storage.local.remove(['pendingLogin']);
                 log('info', `[${runId}] Cleared pendingLogin from storage`);
@@ -197,383 +197,26 @@ function isLoggedIn() {
         for (let i = 0; i < maxAttempts; i++) {
             const usernameInput = document.querySelector('#username, input[name="username"]');
             const passwordInput = document.querySelector('#password, input[name="password"]');
-            
+
             if (usernameInput && passwordInput) {
                 log('info', '✓ Login form is ready');
                 return true;
             }
-            
+
             log('info', `Waiting for form... attempt ${i + 1}/${maxAttempts}`);
             await new Promise(r => setTimeout(r, 500));
         }
         return false;
     }
 
+    // ========================================
+    // NO UI RESTRICTIONS - DEFAULT SITE VIEW
+    // ========================================
     async function applyUserInterfaceSettings() {
-        try {
-            const response = await chrome.runtime.sendMessage({ action: 'GET_USER_SETTINGS' });
-
-            if (response && response.success && response.role === 'logistics') {
-                console.log('[AAS] Logistics Role Detected - applying robust DOM hiding...');
-
-                const hideRestrictedElements = () => {
-                    // 1. Hide Financial Dashboard & "Default payment type" area (Text & Structural)
-                    const keywords = [
-                        'Your deposits', 'Unapplied funds', 'Buying power', 'Overdue amount', 'Current balance',
-                        'Default payment type', 'Wire transfer'
-                    ];
-                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-
-                    let node;
-                    while (node = walker.nextNode()) {
-                        if (node.nodeValue && keywords.some(k => node.nodeValue.includes(k))) {
-                            // Careful with "Wire transfer" - it might be in the table. 
-                            // Only hide if it looks like a header/widget context.
-                            if (node.nodeValue.includes('Wire transfer') && !node.nodeValue.includes('Default payment type')) {
-                                continue;
-                            }
-
-                            // Find the appropriate container to hide
-                            const container = node.parentElement.closest('.border') ||
-                                node.parentElement.closest('.row') ||
-                                node.parentElement.closest('.payment-summary-mobile') ||
-                                node.parentElement.closest('.p-d-flex.p-jc-between'); // Default payment type container often uses flex
-
-                            if (container) {
-                                container.style.setProperty('display', 'none', 'important');
-                                // Also hide immediately adjacent siblings if they are related (like the dropdown next to the label)
-                                let next = container.nextElementSibling;
-                                if (next && (next.classList.contains('cprt-dropdown') || next.tagName === 'P-DROPDOWN')) {
-                                    next.style.setProperty('display', 'none', 'important');
-                                }
-                            }
-
-                            // Specific handling for "Default payment type" label directly
-                            if (node.nodeValue.includes('Default payment type')) {
-                                const span = node.parentElement;
-                                if (span) {
-                                    span.style.setProperty('display', 'none', 'important');
-                                    // Hide the pencil icon and dropdown next to it
-                                    let sibling = span.nextElementSibling;
-                                    while (sibling) {
-                                        sibling.style.setProperty('display', 'none', 'important');
-                                        sibling = sibling.nextElementSibling;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. Hide Action Buttons (Buyer Pickup / Transporter / Export) - ONLY in toolbar, NOT in table
-                    const actionSelectors = [
-                        'buyer-pickup',
-                        'copart-vps-scheduling',
-                        'copart-order-delivery',
-                        '.export-csv-button',
-                        'send-to-transporter'
-                    ];
-                    actionSelectors.forEach(sel => {
-                        document.querySelectorAll(sel).forEach(el => {
-                            // Only hide if NOT inside a table row (tr) or table cell (td)
-                            if (!el.closest('tr') && !el.closest('td') && !el.closest('p-table')) {
-                                el.style.setProperty('display', 'none', 'important');
-                            }
-                        });
-                    });
-
-                    // 3. Hide Notification Bell & Language Selector (Aggressive)
-                    const headerButtons = document.querySelectorAll(
-                        'button[aria-label="toggle notifications view"], .header-icon-unread-notification, .fa-bell, button[data-uname="homepageLanguageselect"], .language_select'
-                    );
-                    headerButtons.forEach(btn => {
-                        btn.style.setProperty('display', 'none', 'important');
-                        const parentLi = btn.closest('li');
-                        if (parentLi) parentLi.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // 4. Hide "Pay Invoice" Button (Only the specific one in header, not table buttons)
-                    document.querySelectorAll('.cprt-btn-yellow').forEach(btn => {
-                        if (btn.innerText && btn.innerText.includes('Pay invoice')) {
-                            btn.style.setProperty('display', 'none', 'important');
-                        }
-                    });
-
-                    // 5. Hide SPECIFIC Dropdowns (by aria-label, NOT all dropdowns)
-                    const dropdownLabels = ['Wire transfer', 'Invoice status', 'USD', 'Debit card'];
-                    document.querySelectorAll('.cprt-dropdown, .p-dropdown').forEach(el => {
-                        const label = el.querySelector('[aria-label]');
-                        const ariaLabel = label ? label.getAttribute('aria-label') : el.getAttribute('aria-label');
-                        if (ariaLabel && dropdownLabels.includes(ariaLabel)) {
-                            el.style.setProperty('display', 'none', 'important');
-                        }
-                    });
-
-                    // 6. Hide Date Range Picker (but not other mat-form-fields like search)
-                    document.querySelectorAll('.cprt-date-range, copart-date-range-fiter').forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // 7. Hide Left Sidebar Navigation
-                    document.querySelectorAll('mat-sidenav, #sidenav, .mat-sidenav, .payment-nav-icons').forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // 8. Stretch Content to Full Width (after hiding sidebar)
-                    document.querySelectorAll('.mat-sidenav-content, .mat-drawer-content, mat-sidenav-content').forEach(el => {
-                        el.style.setProperty('margin-left', '0', 'important');
-                        el.style.setProperty('width', '100%', 'important');
-                    });
-
-                    // 9. Hide Navigation Menu Items
-                    const menuItemsToHide = [
-                        'Dashboard', 'Driver\'s seat', 'Inventory', 'Auctions',
-                        'Bid status', 'Locations', 'Sell your car', 'Services & support'
-                    ];
-
-                    // Hide by data-uname attributes
-                    const dataUnameSelectors = [
-                        'a[data-uname="homePageDashboardTab"]',
-                        'a[data-uname="lotSummaryTab"]',
-                        '[data-uname*="Inventory"]',
-                        '[data-uname*="Auctions"]',
-                        '[data-uname*="Bid"]',
-                        '[data-uname*="Location"]',
-                        '[data-uname*="SellYourCar"]',
-                        'a[href*="driverseat"]',
-                        'a[href*="locations"]',
-                        'a[href*="sell-your-car"]'
-                    ];
-
-                    dataUnameSelectors.forEach(sel => {
-                        document.querySelectorAll(sel).forEach(el => {
-                            el.style.setProperty('display', 'none', 'important');
-                            // Also hide parent li if exists
-                            const parentLi = el.closest('li');
-                            if (parentLi) parentLi.style.setProperty('display', 'none', 'important');
-                        });
-                    });
-
-                    // Hide by text content in navigation
-                    document.querySelectorAll('.header-nav li, .main-nav li, nav li, .menu_click').forEach(el => {
-                        const text = el.innerText.trim();
-                        if (menuItemsToHide.some(item => text.includes(item))) {
-                            el.style.setProperty('display', 'none', 'important');
-                        }
-                    });
-
-                    // 10. Hide Deposits and Funds from Payments dropdown (keep only due/history)
-                    document.querySelectorAll('a[href*="/deposits"], a[href*="/funds"], a[title="Deposits"], a[title="Funds"]').forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                        const parentLi = el.closest('li');
-                        if (parentLi) parentLi.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // Also hide by text content
-                    document.querySelectorAll('ul li a, .dropdown-menu li a').forEach(el => {
-                        const text = el.innerText.trim();
-                        if (text === 'Deposits' || text === 'Funds') {
-                            el.style.setProperty('display', 'none', 'important');
-                            const parentLi = el.closest('li');
-                            if (parentLi) parentLi.style.setProperty('display', 'none', 'important');
-                        }
-                    });
-
-                    // 11. Hide Help center
-                    document.querySelectorAll('a[href*="help-center"], a[href*="helpcenter"]').forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                        const parentLi = el.closest('li');
-                        if (parentLi) parentLi.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // Hide by text
-                    document.querySelectorAll('.header-nav li, .main-nav li, nav li').forEach(el => {
-                        if (el.innerText.trim().includes('Help center')) {
-                            el.style.setProperty('display', 'none', 'important');
-                        }
-                    });
-
-                    // 12. Insert Payment Buttons NEXT TO Search Inventory button
-                    const createPaymentButtons = () => {
-                        if (document.getElementById('aas-payment-buttons-container')) return;
-
-                        // Find the Search Inventory button or header area
-                        const searchBtn = document.querySelector('button[data-uname*="search"], .search-inventory-btn, [class*="search-btn"], .header-top .search-area, .header-search');
-                        const headerRight = document.querySelector('.header-right, .header-top-right, .header-actions');
-
-                        const container = document.createElement('div');
-                        container.id = 'aas-payment-buttons-container';
-                        container.style.cssText = `
-                            display: inline-flex !important;
-                            gap: 10px !important;
-                            margin-left: 15px !important;
-                            align-items: center !important;
-                        `;
-
-                        const dueBtn = document.createElement('a');
-                        dueBtn.href = '/member-payments/unpaid-invoices';
-                        dueBtn.innerText = 'Payments Due';
-                        dueBtn.style.cssText = `
-                            background: #2196F3 !important;
-                            color: #fff !important;
-                            padding: 8px 16px !important;
-                            border-radius: 4px !important;
-                            text-decoration: none !important;
-                            font-weight: bold !important;
-                            font-size: 13px !important;
-                            white-space: nowrap !important;
-                        `;
-
-                        const historyBtn = document.createElement('a');
-                        historyBtn.href = '/member-payments/payment-history';
-                        historyBtn.innerText = 'Payment History';
-                        historyBtn.style.cssText = `
-                            background: #4CAF50 !important;
-                            color: #fff !important;
-                            padding: 8px 16px !important;
-                            border-radius: 4px !important;
-                            text-decoration: none !important;
-                            font-weight: bold !important;
-                            font-size: 13px !important;
-                            white-space: nowrap !important;
-                        `;
-
-                        container.appendChild(dueBtn);
-                        container.appendChild(historyBtn);
-
-                        // Try to insert next to search button
-                        if (searchBtn && searchBtn.parentElement) {
-                            searchBtn.parentElement.insertBefore(container, searchBtn.nextSibling);
-                        } else if (headerRight) {
-                            headerRight.appendChild(container);
-                        } else {
-                            // Fallback: fixed position in top-right
-                            container.style.cssText = `
-                                position: fixed !important;
-                                top: 15px !important;
-                                right: 200px !important;
-                                z-index: 999999 !important;
-                                display: flex !important;
-                                gap: 10px !important;
-                            `;
-                            document.body.appendChild(container);
-                        }
-                    };
-
-                    if (document.body) createPaymentButtons();
-                    else document.addEventListener('DOMContentLoaded', createPaymentButtons);
-
-                    // 13. Hide entire navigation menu
-                    document.querySelectorAll('.header-nav, #mobile-header-nav-links, .navbar-nav, nav.navbar, .mobile-nav').forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // 14. Hide Bid Information Section
-                    document.querySelectorAll('.bid-information-section, bid-information, dashboard-prelim-bid, #bid-information-ldp6-section').forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                    });
-
-                    // 15. Hide Watchlist Button - specific selectors only
-                    document.querySelectorAll('#watchlistBtn, .watch-button, button.watch-button').forEach(el => {
-                        el.style.setProperty('display', 'none', 'important');
-                    });
-                }; // END hideRestrictedElements
-
-                // Run once
-                if (document.body) hideRestrictedElements();
-
-                // Run on mutations (SPA navigation / Dynamic loading)
-                const observer = new MutationObserver((mutations) => {
-                    hideRestrictedElements();
-                });
-
-                if (document.body) {
-                    observer.observe(document.body, { childList: true, subtree: true });
-                } else {
-                    document.addEventListener('DOMContentLoaded', () => {
-                        hideRestrictedElements();
-                        observer.observe(document.body, { childList: true, subtree: true });
-                    });
-                }
-
-                // 16. Auto-set Rows Per Page to 500 - Based on working COP-IAAI-EXT implementation
-                // Use window-level flag to reset on actual page navigation
-                if (typeof window.aasPaginationSet === 'undefined') {
-                    window.aasPaginationSet = false;
-                }
-
-                const setPaginationTo500 = () => {
-                    // Check if already set in this page session
-                    const currentRpp = document.querySelector('.p-paginator-rpp-options span');
-                    if (currentRpp && currentRpp.textContent.includes('500')) {
-                        console.log('[AAS] Pagination already at 500');
-                        window.aasPaginationSet = true;
-                        return;
-                    }
-                    if (window.aasPaginationSet) {
-                        console.log('[AAS] Pagination flag already set, skipping');
-                        return;
-                    }
-
-                    console.log('[AAS] Starting pagination to 500...');
-
-                    // Wait for table to stop loading
-                    const checkIfLoading = setInterval(() => {
-                        const loadingIcon = document.querySelector('.p-datatable-loading-icon');
-                        const rppDropdown = document.querySelector('.p-paginator-rpp-options');
-
-                        if (!loadingIcon && rppDropdown) {
-                            clearInterval(checkIfLoading);
-                            window.aasPaginationSet = true;
-
-                            console.log('[AAS] Table loaded, clicking dropdown...');
-
-                            // Click dropdown to open
-                            rppDropdown.click();
-
-                            // Wait for options to appear then click 500
-                            setTimeout(() => {
-                                const option500 = document.querySelector('[aria-label="500"]');
-                                if (option500) {
-                                    option500.click();
-                                    console.log('[AAS] Set rows per page to 500');
-                                } else {
-                                    // Fallback: find max option
-                                    const allOptions = document.querySelectorAll('.p-dropdown-item, p-dropdownitem li');
-                                    let maxOpt = null;
-                                    let maxVal = 0;
-                                    allOptions.forEach(opt => {
-                                        const val = parseInt(opt.textContent);
-                                        if (!isNaN(val) && val > maxVal) {
-                                            maxVal = val;
-                                            maxOpt = opt;
-                                        }
-                                    });
-                                    if (maxOpt) {
-                                        maxOpt.click();
-                                        console.log('[AAS] Set rows per page to', maxVal);
-                                    } else {
-                                        console.log('[AAS] No pagination options found');
-                                    }
-                                }
-                            }, 500);
-                        }
-                    }, 500);
-
-                    // Clear interval after 10 seconds to prevent infinite loop
-                    setTimeout(() => clearInterval(checkIfLoading), 10000);
-                };
-
-                // Only run on unpaid invoices or payment history pages
-                if (window.location.href.includes('member-payments')) {
-                    // Reset flag on fresh page load
-                    window.aasPaginationSet = false;
-                    setTimeout(setPaginationTo500, 2000);
-                }
-            }
-        } catch (e) {
-            // console.warn('[AAS] UI Settings Check:', e);
-        }
+        // DO NOTHING - show default site
+        console.log('[AAS] No UI restrictions applied - default view');
     }
+
 })();
 
 // Create and inject overlay
@@ -658,12 +301,12 @@ async function executeCopartLogin(username, password, runId = 'unknown') {
 
     // Check if Copart has blocked access (Imperva/Incapsula security)
     const pageText = document.body.innerText || '';
-    if (pageText.includes('Access denied') || pageText.includes('Error 15') || 
+    if (pageText.includes('Access denied') || pageText.includes('Error 15') ||
         pageText.includes('security service') || pageText.includes('Imperva')) {
         log('error', `[${runId}] ⚠️ COPART SECURITY BLOCK DETECTED`);
         log('error', `[${runId}] Copart has blocked automated access from this IP`);
         log('error', `[${runId}] Solutions: 1) Wait 10 minutes, 2) Change IP/VPN, 3) Clear cookies`);
-        
+
         // Update overlay to show error
         const overlay = document.getElementById('aas-auth-overlay');
         if (overlay) {
@@ -702,7 +345,7 @@ async function executeCopartLogin(username, password, runId = 'unknown') {
     try {
         const csrfToken = getCopartCsrfToken();
         log('info', `[${runId}] CSRF Token search result:`, csrfToken ? 'FOUND' : 'NOT FOUND');
-        
+
         if (csrfToken) {
             log('info', `[${runId}] CSRF Token found, attempting API login via Background...`);
 

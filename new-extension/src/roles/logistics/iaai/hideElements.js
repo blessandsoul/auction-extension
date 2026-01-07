@@ -1,149 +1,109 @@
 /**
- * IAAI UI Hiding - Logistics Role
- * 
- * This script hides UI elements on IAAI for the logistics role.
- * All financial, account, and purchase-related elements are hidden.
+ * IAAI UI Restrictions - COPIED FROM EXAMPLE
+ * Based on: EXAMPLE/cjlmblcipnoclbbgeelpefcdjdaekhnd/content_script.js
+ * Lines 93-135
  */
 
 /**
- * Configuration for elements to hide
+ * Apply IAAI restrictions
+ * Copied from EXAMPLE content_script.js lines 130-135
  */
-const IAAI_HIDE_CONFIG = {
-    // Pages to always hide
-    alwaysHidePages: ['/user'],
+function applyIAAIRestrictions() {
+    const pathname = window.location.pathname.toLowerCase();
+    const username = localStorage.getItem('username');
+    const host = window.location.host;
 
-    // Pages to hide for this role
-    hidePages: [
-        '/lostvehicles',
-        '/purchasehistory',
-        '/titleinstructions'
-        // NOTE: '/payment' and '/tobepickedup' REMOVED - these are landing pages after login
-    ],
-
-    // CSS selectors for elements to remove
-    // NOTE: Removed #PaymentContainer and .sidebar - these are needed for the payment page
-    elementsToRemove: [
-        '#transactionalModal',
-        '#myDashboardContainer',
-        '#editContactPanel',
-        '#dvLostVehiclesContent',
-        '.segment-ctrl-container',
-        '.tbp-total',
-        '.table-th.checkbox',
-        '.container-footer'
-    ]
-};
-
-/**
- * Check if pathname matches any path in the list
- */
-function pathMatchesList(pathname, paths) {
-    const lowerPath = pathname.toLowerCase();
-    return paths.some(path => lowerPath.includes(path.toLowerCase()));
-}
-
-/**
- * Check if current page should be hidden
- */
-function shouldHidePage(pathname) {
-    return pathMatchesList(pathname, IAAI_HIDE_CONFIG.alwaysHidePages) ||
-        pathMatchesList(pathname, IAAI_HIDE_CONFIG.hidePages);
-}
-
-/**
- * Hide navigation links that point to hidden pages
- */
-function hideNavigationLinks() {
-    document.querySelectorAll('a').forEach(link => {
-        const href = link.href || '';
-        if (!href.startsWith('http')) return;
-
-        try {
-            const pathname = new URL(href).pathname.toLowerCase();
-
-            if (pathMatchesList(pathname, IAAI_HIDE_CONFIG.alwaysHidePages) ||
-                pathMatchesList(pathname, IAAI_HIDE_CONFIG.hidePages)) {
-                const parent = link.parentNode;
-                if (parent && parent.nodeName === 'LI') {
-                    parent.remove();
-                } else {
-                    link.remove();
-                }
-            }
-        } catch (e) {
-            // Invalid URL, skip
-        }
-    });
-}
-
-/**
- * Redirect if on a hidden page
- */
-function redirectIfHiddenPage() {
-    const pathname = window.location.pathname;
-    if (shouldHidePage(pathname)) {
-        window.location.href = '/';
+    // Redirect these pages for non-usalogistics users
+    if (
+        (pathname.includes('/titleinstructions') ||
+            pathname.includes('/licenses') ||
+            pathname.includes('/user') ||
+            pathname.includes('/notifications')) &&
+        host.includes('iaai.com') &&
+        username !== 'usalogistics'
+    ) {
+        window.location.href = 'https://iaai.com';
+        return;
     }
 }
 
 /**
- * Remove specific DOM elements
+ * Show purchase history for usalogistics
+ * Copied from EXAMPLE content_script.js line 127
  */
-function removeElements() {
-    IAAI_HIDE_CONFIG.elementsToRemove.forEach(selector => {
-        document.querySelectorAll(selector).forEach(el => {
-            const parent = el.parentElement;
-            if (selector === '#editContactPanel' && parent) {
-                parent.remove();
-            } else if (selector === '.tbp-total' && parent) {
-                parent.remove();
-            } else {
-                el.remove();
-            }
+function showPurchaseHistoryForAdmin() {
+    const pathname = window.location.pathname.toLowerCase();
+    const username = localStorage.getItem('username');
+
+    if (pathname.includes('/purchasehistory') && username === 'usalogistics') {
+        const rows = document.querySelectorAll('#divPurchaseHistoryList .table-row');
+        rows.forEach(row => {
+            row.style.setProperty('display', 'table-row', 'important');
         });
-    });
+    }
 }
 
 /**
- * Wait for body to be ready
+ * Hide user profile element in header
+ * Removes the user name, avatar, dropdown menu, and specifically the Profile link
  */
-function waitForBody() {
-    return new Promise(resolve => {
-        if (document.body) {
-            resolve();
-        } else {
-            const observer = new MutationObserver(() => {
-                if (document.body) {
-                    observer.disconnect();
-                    resolve();
-                }
-            });
-            observer.observe(document.documentElement, { childList: true });
-        }
+function hideUserProfileElement() {
+    // Remove the whole user block
+    const headerUser = document.querySelector('.header__user');
+    if (headerUser) {
+        headerUser.remove();
+    }
+
+    // Also target specific Profile link elements to be sure
+    const profileItems = document.querySelectorAll('a[href="/User"], #ProfileMenuProfileDropdown');
+    profileItems.forEach(el => el.remove());
+}
+
+/**
+ * Hide action area and bidding buttons
+ * Removes Pre-Bid buttons, Buy Now buttons, Cost Calculator, Watch buttons, and Bid Data
+ */
+function hideActionArea() {
+    const selectorsToRemove = [
+        '.btn--pre-bid',                 // Pre-Bid buttons
+        '.action-area__content',         // Main action area container
+        '.action-area__bid-data',        // Bid data block
+        '.action-area__cost-calculator', // Cost Calculator
+        '.action-area__watch-btn',       // Watch buttons
+        '.action-btn-container',         // Bidding buttons container
+        '.action-area__secondary-info'   // Secondary info (Current Bid, Buy Now Price)
+    ];
+
+    selectorsToRemove.forEach(selector => {
+        const elements = document.querySelectorAll(selector);
+        elements.forEach(el => el.remove());
     });
 }
 
 /**
- * Initialize IAAI hiding
+ * Initialize IAAI restrictions
+ * Called by roleManager.js
  */
 async function initIAAIHiding(config) {
-    if (!config) return;
+    console.log('[IAAI] Initializing EXAMPLE-style UI restrictions');
 
-    console.log('[IAAI] Initializing logistics role hiding');
+    // Apply restrictions immediately
+    applyIAAIRestrictions();
 
-    await waitForBody();
+    // Hide user profile element
+    hideUserProfileElement();
 
-    // Initial cleanup
-    removeElements();
-    hideNavigationLinks();
+    // Hide action area and bidding buttons
+    hideActionArea();
+
+    // Show purchase history for admin
+    showPurchaseHistoryForAdmin();
 
     // Set up interval for dynamic content
     setInterval(() => {
-        removeElements();
-        hideNavigationLinks();
-        if (config.hidePages) {
-            redirectIfHiddenPage();
-        }
+        showPurchaseHistoryForAdmin();
+        hideUserProfileElement(); // Keep checking in case element is re-added
+        hideActionArea();         // Keep checking for dynamic content
     }, 500);
 }
 

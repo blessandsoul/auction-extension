@@ -6,7 +6,7 @@ function log(level, ...args) {
     const timestamp = new Date().toISOString();
     const prefix = `[AAS-CS ${timestamp}]`;
     const message = args.join(' ');
-    
+
     if (level === 'error') {
         console.error(prefix, ...args);
     } else if (level === 'warn') {
@@ -14,12 +14,12 @@ function log(level, ...args) {
     } else {
         console.log(prefix, ...args);
     }
-    
+
     // Send to background for persistence (survives page reload)
     chrome.runtime.sendMessage({
         action: 'LOG_FROM_CONTENT',
         data: { level, message }
-    }).catch(() => {}); // Ignore if background not ready
+    }).catch(() => { }); // Ignore if background not ready
 }
 
 // Generate runId if needed
@@ -43,7 +43,15 @@ function generateRunId() {
     log('info', 'URL:', currentUrl.substring(0, 80));
     log('info', 'isCopartLogin:', isCopartLogin);
     log('info', 'isIAAILogin:', isIAAILogin);
+    log('info', 'isIAAILogin:', isIAAILogin);
     log('info', '========================================');
+
+    // ============================================
+    // PRIORITY 0: Inject Account Indicator
+    // ============================================
+    if (currentUrl.includes('copart.com')) {
+        injectAccountIndicator();
+    }
 
     // ============================================
     // PRIORITY 1: Handle Login (Direct API Method)
@@ -79,37 +87,36 @@ function generateRunId() {
         try {
             // 1. Extract CSRF Token (CRITICAL for Copart security)
             log('info', `[${runId}] Extracting CSRF token from page...`);
-            
+
             let csrfToken = null;
-            
-            // Method 1: Try extracting from head text content
-            const headText = document.head?.textContent || '';
-            let tokenMatch = headText.match(/csrfToken[:\s]*["']([^"']+)["']/i);
-            
-            if (tokenMatch && tokenMatch[1]) {
-                csrfToken = tokenMatch[1];
-                log('info', `[${runId}] ✅ CSRF Token found in head (method 1)`);
+
+            // Method 1: Try meta tag (Most Reliable)
+            const metaTag = document.querySelector('meta[name="_csrf"]') ||
+                document.querySelector('meta[name="csrf-token"]');
+            if (metaTag) {
+                csrfToken = metaTag.getAttribute('content');
+                log('info', `[${runId}] ✅ CSRF Token found in meta tag (Priority 1)`);
             }
-            
-            // Method 2: Try meta tag
-            if (!csrfToken) {
-                const metaTag = document.querySelector('meta[name="_csrf"]') || 
-                               document.querySelector('meta[name="csrf-token"]');
-                if (metaTag) {
-                    csrfToken = metaTag.getAttribute('content');
-                    log('info', `[${runId}] ✅ CSRF Token found in meta tag (method 2)`);
-                }
-            }
-            
-            // Method 3: Try hidden input
+
+            // Method 2: Try hidden input
             if (!csrfToken) {
                 const hiddenInput = document.querySelector('input[name="_csrf"]');
                 if (hiddenInput) {
                     csrfToken = hiddenInput.value;
-                    log('info', `[${runId}] ✅ CSRF Token found in hidden input (method 3)`);
+                    log('info', `[${runId}] ✅ CSRF Token found in hidden input (Priority 2)`);
                 }
             }
-            
+
+            // Method 3: Try extracting from head text content (Regex)
+            if (!csrfToken) {
+                const headText = document.head?.textContent || '';
+                let tokenMatch = headText.match(/csrfToken[:\s]*["']([^"']+)["']/i);
+                if (tokenMatch && tokenMatch[1]) {
+                    csrfToken = tokenMatch[1];
+                    log('info', `[${runId}] ✅ CSRF Token found in head script (Priority 3)`);
+                }
+            }
+
             // Method 4: Try script tags
             if (!csrfToken) {
                 const scripts = document.querySelectorAll('script');
@@ -118,18 +125,17 @@ function generateRunId() {
                     const match = scriptText.match(/["']?csrf["']?[:\s]*["']([^"']+)["']/i);
                     if (match && match[1]) {
                         csrfToken = match[1];
-                        log('info', `[${runId}] ✅ CSRF Token found in script tag (method 4)`);
+                        log('info', `[${runId}] ✅ CSRF Token found in script tag (Priority 4)`);
                         break;
                     }
                 }
             }
-            
+
             if (!csrfToken) {
                 log('error', `[${runId}] ❌ Failed to extract CSRF Token using all methods`);
-                log('error', `[${runId}] Head text preview: ${headText.substring(0, 200)}`);
                 return { success: false, error: 'CSRF_MISSING' };
             }
-            
+
             log('info', `[${runId}] ✅ CSRF Token extracted: ${csrfToken.substring(0, 10)}...`);
 
             // 2. Prepare Payload (Copart standard format)
@@ -141,8 +147,6 @@ function generateRunId() {
             });
 
             log('info', `[${runId}] 📤 Sending authentication request to /processLogin...`);
-            log('info', `[${runId}] Payload (password hidden): ${JSON.stringify({accountType: 0, accountTypeValue: 0, username})}`);
-            log('info', `[${runId}] CSRF Token (first 20 chars): ${csrfToken.substring(0, 20)}...`);
 
             // 3. Send Direct API Request
             const response = await fetch("https://www.copart.com/processLogin", {
@@ -150,7 +154,8 @@ function generateRunId() {
                 headers: {
                     "Accept": "application/json, text/plain, */*",
                     "Content-Type": "application/json;charset=UTF-8",
-                    "X-XSRF-TOKEN": csrfToken,
+                    "X-XSRF-TOKEN": csrfToken, // Angular standard
+                    "X-CSRF-TOKEN": csrfToken, // Spring standard (Safety net)
                     "X-Requested-With": "XMLHttpRequest"
                 },
                 body: payload,
@@ -165,11 +170,11 @@ function generateRunId() {
             let data;
             const contentType = response.headers.get('content-type');
             log('info', `[${runId}] Content-Type: ${contentType}`);
-            
+
             try {
                 const responseText = await response.text();
                 log('info', `[${runId}] Raw response (first 500 chars): ${responseText.substring(0, 500)}`);
-                
+
                 if (contentType && contentType.includes('application/json')) {
                     data = JSON.parse(responseText);
                     log('info', `[${runId}] Parsed JSON response:`, JSON.stringify(data));
@@ -187,30 +192,30 @@ function generateRunId() {
             log('info', `[${runId}] Response type: ${response.type}`);
             log('info', `[${runId}] Response redirected: ${response.redirected}`);
             log('info', `[${runId}] Response OK: ${response.ok}`);
-            
+
             // Check response data for success
             // Copart returns: { data: { error: null/undefined } } on success
             // or { data: { error: "message" } } on failure
-            
+
             if (response.ok && data && data.data) {
                 // Check if there's an error in the response
                 if (!data.data.error) {
                     log('info', `[${runId}] ✅ Authentication successful!`);
                     log('info', `[${runId}] Response data:`, JSON.stringify(data));
-                    
+
                     // CRITICAL: Clear credentials BEFORE reload to prevent loop
                     log('info', `[${runId}] Clearing credentials to prevent reload loop...`);
                     await chrome.storage.local.remove(['pendingLogin']);
-                    
+
                     // Notify background of success (will clear navigation guards)
                     chrome.runtime.sendMessage({
                         action: 'LOGIN_SUCCESS',
                         data: { site: 'copart', runId }
-                    }).catch(() => {});
-                    
+                    }).catch(() => { });
+
                     // Small delay to ensure storage is cleared
                     await new Promise(resolve => setTimeout(resolve, 100));
-                    
+
                     // Navigate to dashboard (don't reload login page!)
                     log('info', `[${runId}] Navigating to dashboard...`);
                     window.location.href = 'https://www.copart.com/member-payments/unpaid-invoices';
@@ -246,7 +251,7 @@ function generateRunId() {
         // PERSISTENT IDEMPOTENT GUARD: Check chrome.storage.session (survives crashes)
         const tabId = await getCurrentTabId();
         const sessionKey = `aas_login_attempted_${tabId}`;
-        
+
         try {
             const result = await chrome.storage.session.get(sessionKey);
             if (result[sessionKey] === true) {
@@ -256,7 +261,7 @@ function generateRunId() {
         } catch (e) {
             log('warn', 'chrome.storage.session not available, falling back to sessionStorage');
         }
-        
+
         // Also check sessionStorage as fallback (with error handling)
         try {
             const alreadyRan = sessionStorage.getItem('aas_login_attempted');
@@ -268,9 +273,9 @@ function generateRunId() {
             log('warn', 'sessionStorage access denied, continuing anyway');
             // Continue execution - we have chrome.storage.session as primary guard
         }
-        
+
         log('info', 'On Copart login page, checking for pending credentials...');
-        
+
         try {
             const result = await chrome.storage.local.get(['pendingLogin']);
             let pending = result.pendingLogin;
@@ -285,7 +290,7 @@ function generateRunId() {
                 try {
                     const response = await chrome.runtime.sendMessage({ action: 'GET_LOGIN_DATA' });
                     log('info', `[${runId}] Background response:`, response?.success ? 'SUCCESS' : 'FAILED');
-                    
+
                     if (response && response.success && response.data) {
                         log('info', `[${runId}] Received credentials from background!`);
                         pending = response.data;
@@ -307,6 +312,17 @@ function generateRunId() {
 
             log('info', `[${runId}] Found pending login for site:`, pending.site);
 
+            // SAVE ACCOUNT NAME FOR INDICATOR
+            if (pending.accountName) {
+                try {
+                    localStorage.setItem('aas_account_name', pending.accountName);
+                    log('info', `[${runId}] Saved account name to localStorage: ${pending.accountName}`);
+                    injectAccountIndicator(); // Update immediately
+                } catch (e) {
+                    log('warn', `[${runId}] Failed to save account name:`, e);
+                }
+            }
+
             if (pending.site === 'copart') {
                 // Mark as attempted BEFORE doing anything (both persistent and session)
                 try {
@@ -315,7 +331,7 @@ function generateRunId() {
                 } catch (e) {
                     log('warn', `[${runId}] Could not set session storage guard:`, e.message);
                 }
-                
+
                 try {
                     sessionStorage.setItem('aas_login_attempted', 'true');
                     log('info', `[${runId}] Set sessionStorage flag to prevent re-run`);
@@ -323,19 +339,19 @@ function generateRunId() {
                     log('warn', `[${runId}] Could not set sessionStorage flag:`, e.message);
                     // Not critical - chrome.storage.session is the primary guard
                 }
-                
+
                 // Show overlay
                 showOverlay();
                 log('info', `[${runId}] Overlay shown`);
-                
+
                 // Execute DIRECT API login (no form filling, no DOM waiting)
                 log('info', `[${runId}] Executing Direct API Authentication...`);
                 const loginResult = await attemptDirectCopartLogin(pending.username, pending.password, runId);
-                
+
                 if (!loginResult.success) {
                     log('error', `[${runId}] Direct API login failed:`, loginResult.error);
                     hideOverlay();
-                    
+
                     // Show user-friendly error
                     const errorMessages = {
                         'CSRF_MISSING': 'Could not extract security token from page. Please try again.',
@@ -343,7 +359,7 @@ function generateRunId() {
                         'NETWORK_ERROR': 'Network error. Please check your connection.',
                         'UNKNOWN_ERROR': 'Login failed. Please try again.'
                     };
-                    
+
                     alert(`AAS Login Failed\n\n${errorMessages[loginResult.error] || loginResult.error}`);
                 }
 
@@ -412,49 +428,66 @@ function generateRunId() {
     }
 
     async function applyUserInterfaceSettings() {
+        // UI restrictions are now handled by src/roles/logistics/*/hideElements.js
+        // This function is kept for compatibility but does nothing
+        console.log('[AAS] UI Settings handled by role-specific scripts');
+    }
+
+    function injectAccountIndicator() {
         try {
-            const response = await chrome.runtime.sendMessage({ action: 'GET_USER_SETTINGS' });
+            const accountName = localStorage.getItem('aas_account_name');
+            if (!accountName) return;
 
-            if (response && response.success && response.role === 'logistics') {
-                console.log('[AAS] Logistics Role Detected - applying robust DOM hiding...');
-
-                const hideRestrictedElements = () => {
-                    // Hide Financial Dashboard & "Default payment type" area
-                    const keywords = [
-                        'Your deposits', 'Unapplied funds', 'Buying power', 'Overdue amount', 'Current balance',
-                        'Default payment type', 'Wire transfer'
-                    ];
-                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-
-                    let node;
-                    while (node = walker.nextNode()) {
-                        if (node.nodeValue && keywords.some(k => node.nodeValue.includes(k))) {
-                            if (node.nodeValue.includes('Wire transfer') && !node.nodeValue.includes('Default payment type')) {
-                                continue;
-                            }
-
-                            const container = node.parentElement.closest('.border') ||
-                                node.parentElement.closest('.row') ||
-                                node.parentElement.closest('.payment-summary-mobile') ||
-                                node.parentElement.closest('.p-d-flex.p-jc-between');
-
-                            if (container) {
-                                container.style.setProperty('display', 'none', 'important');
-                                let next = container.nextElementSibling;
-                                if (next && (next.classList.contains('cprt-dropdown') || next.tagName === 'P-DROPDOWN')) {
-                                    next.style.setProperty('display', 'none', 'important');
-                                }
-                            }
-                        }
-                    }
-                };
-
-                hideRestrictedElements();
-                const observer = new MutationObserver(hideRestrictedElements);
-                observer.observe(document.body, { childList: true, subtree: true });
+            // Check if indicator already exists
+            const existing = document.getElementById('aas-account-indicator');
+            if (existing) {
+                if (existing.textContent !== accountName) {
+                    existing.textContent = accountName;
+                }
+                return;
             }
+
+            const indicator = document.createElement('div');
+            indicator.id = 'aas-account-indicator';
+            indicator.textContent = accountName;
+            indicator.style.cssText = `
+                position: fixed;
+                bottom: 15px;
+                right: 15px;
+                background-color: #0f172a;
+                color: #f8fafc;
+                padding: 8px 16px;
+                border-radius: 9999px;
+                font-weight: 600;
+                font-size: 13px;
+                z-index: 2147483647;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                pointer-events: none;
+                opacity: 0.9;
+                border: 1px solid #334155;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            `;
+
+            // Add a small dot to indicate "Live" status
+            const dot = document.createElement('span');
+            dot.style.cssText = `
+                display: block;
+                width: 8px;
+                height: 8px;
+                background-color: #22c55e;
+                border-radius: 50%;
+                box-shadow: 0 0 8px #22c55e;
+            `;
+
+            indicator.prepend(dot);
+
+            document.body.appendChild(indicator);
+            console.log('[AAS] Account indicator injected:', accountName);
         } catch (e) {
-            console.log('[AAS] Could not apply UI settings:', e.message);
+            console.warn('[AAS] Failed to inject indicator:', e);
         }
     }
 

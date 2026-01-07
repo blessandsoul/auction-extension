@@ -351,49 +351,17 @@ function isUrlAllowed(url, site) {
 }
 
 // UI Restrictions injection on page load
+// DISABLED - NO RESTRICTIONS APPLIED
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  // ALL URL AND CSS RESTRICTIONS REMOVED
+  // Sites show default view
   if (changeInfo.status === 'loading' && tab.url) {
-    // URL Access Control (only when authenticated)
-    if (currentSession && currentSession.authenticated) {
-      // IAAI URL check
-      if (tab.url.includes('iaai.com') && !tab.url.includes('login.iaai.com')) {
-        if (!isUrlAllowed(tab.url, 'iaai')) {
-          console.log('[AAS] Blocked IAAI URL:', tab.url);
-          chrome.tabs.update(tabId, { url: DEFAULT_REDIRECTS.iaai });
-          return;
-        }
-      }
-
-      // Copart URL check
-      if (tab.url.includes('copart.com')) {
-        if (!isUrlAllowed(tab.url, 'copart')) {
-          console.log('[AAS] Blocked Copart URL:', tab.url);
-          chrome.tabs.update(tabId, { url: DEFAULT_REDIRECTS.copart });
-          return;
-        }
-      }
-    }
-
-    // Apply UI restrictions from server (CACHED to prevent polling storm)
-    if (tab.url.includes('copart.com') || tab.url.includes('iaai.com')) {
-      if (currentSession && currentSession.authenticated) {
-        try {
-          // Use cached restrictions instead of fetching every time
-          const restrictionsData = await getCachedRestrictions(currentSession.username);
-          if (restrictionsData.success && restrictionsData.css) {
-            chrome.scripting.insertCSS({
-              target: { tabId: tabId },
-              css: restrictionsData.css,
-              origin: "AUTHOR"
-            }).catch(err => { });
-          }
-        } catch (e) {
-          log('warn', '[AAS] Failed to fetch restrictions:', e.message);
-        }
-      }
-    }
+    // No URL blocking
+    // No CSS injection
+    // Default site experience
   }
 });
+
 
 // Clear cookies on extension install/update
 chrome.runtime.onInstalled.addListener(async () => {
@@ -618,12 +586,18 @@ async function handleOpenCopart(data, sendResponse) {
     log('info', `[${runId}] Copart cookies cleared`);
 
     // Store credentials in local storage for content script
+    const displayNames = {
+      'copart1': 'COPART I',
+      'copart2': 'COPART II'
+    };
+
     await chrome.storage.local.set({
       pendingLogin: {
         site: 'copart',
         type: 'COPART',
         username: creds.username,
         password: creds.password,
+        accountName: displayNames[account] || account,
         timestamp: Date.now(),
         runId: runId
       }
@@ -663,6 +637,11 @@ async function handleOpenCopart(data, sendResponse) {
       });
       log('info', `[${runId}] Credentials cached in memory for tab ${targetTabId}`);
     }
+
+    // UPDATE ACTIVE ACCOUNT FOR UI INDICATOR
+    await chrome.storage.local.set({ activeCopartAccount: account });
+    log('info', `[${runId}] Set activeCopartAccount to: ${account}`);
+
 
     // NO NAVIGATION MONITORING NEEDED
     // Content script will:
@@ -743,8 +722,17 @@ async function handleOpenIAAI(sendResponse) {
 
     if (cookie) {
       console.log('[AAS] IAAI Login SUCCESS');
-      await chrome.tabs.create({ url: SITES.IAAI.PAYMENT_URL });
-      await chrome.tabs.create({ url: SITES.IAAI.PICKUP_URL, active: false });
+      console.log('[AAS] Opening Payment URL:', SITES.IAAI.PAYMENT_URL);
+      console.log('[AAS] Opening Pickup URL:', SITES.IAAI.PICKUP_URL);
+
+      // Open Payment page (active tab)
+      const paymentTab = await chrome.tabs.create({ url: 'https://www.iaai.com/Payment' });
+      console.log('[AAS] Created Payment tab:', paymentTab.id);
+
+      // Open To Be Picked Up page (background tab)
+      const pickupTab = await chrome.tabs.create({ url: 'https://www.iaai.com/tobepickedup', active: false });
+      console.log('[AAS] Created Pickup tab:', pickupTab.id);
+
       sendResponse({ success: true });
     } else {
       throw new Error('Login failed (cookie not set)');
