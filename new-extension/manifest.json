@@ -22,7 +22,8 @@
         "https://api.ipify.org/*",
         "https://api.telegram.org/*",
         "http://localhost:3000/*",
-        "http://148.251.167.227/*"
+        "http://148.251.167.227/*",
+        "http://o00g0occosc40c48884cww8s.148.251.167.227.sslip.io/*"
     ],
     "background": {
         "service_worker": "background.js",

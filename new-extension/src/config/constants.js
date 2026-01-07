@@ -6,8 +6,8 @@
 const IS_PRODUCTION = true; // Set to true when deploying
 
 const CONFIG = {
-  SERVER_URL: IS_PRODUCTION 
-    ? 'http://148.251.167.227'  // Your Ubuntu Server IP
+  SERVER_URL: IS_PRODUCTION
+    ? 'http://o00g0occosc40c48884cww8s.148.251.167.227.sslip.io'
     : 'http://localhost:3000',   // Development server
   SESSION_DURATION: 4 * 60 * 60 * 1000, // 4 hours
   OTP_EXPIRY: 5 * 60 * 1000, // 5 minutes
